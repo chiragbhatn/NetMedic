@@ -26,4 +26,14 @@ jobs:
       - name: Lint
         run: ruff check src tests evals
       - name: Test (replay mode, no lab, no API key)
-        run: pytest -q
+        env:
+          COLUMNS: "250"
+        run: |
+          set -o pipefail
+          pytest -q -rfE 2>&1 | tee pytest-output.txt
+      - name: Report failing tests as annotations
+        if: failure()
+        run: |
+          grep -E '^(FAILED|ERROR) ' pytest-output.txt | head -n 9 | while IFS= read -r line; do
+            echo "::error title=pytest::${line}"
+          done
