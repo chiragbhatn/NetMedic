@@ -1,0 +1,21 @@
+devices:
+  r1:
+    host: clab-netmedic-r1
+    platform: frr
+    role: router
+  r2:
+    host: clab-netmedic-r2
+    platform: frr
+    role: router
+  r3:
+    host: clab-netmedic-r3
+    platform: arista_eos
+    role: router
+  host1:
+    host: clab-netmedic-host1
+    platform: linux
+    role: host
+  host2:
+    host: clab-netmedic-host2
+    platform: linux
+    role: host

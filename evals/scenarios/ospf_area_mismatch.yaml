@@ -1,0 +1,6 @@
+id: ospf_area_mismatch
+problem: "r1 cannot reach the loopback of r3"
+expected: {fault_type: ospf_area_mismatch, device: r1}
+# FRR refuses to change an interface's area in place, so remove the old one first.
+inject:  {device: r1, commands: ["interface eth1", "no ip ospf area 0", "ip ospf area 1"]}
+restore: {device: r1, commands: ["interface eth1", "no ip ospf area 1", "ip ospf area 0"]}

@@ -1,0 +1,15 @@
+Interface eth2 is down
+  Link ups:       1    last: 2026/11/16 08:15:14.17
+  Link downs:     1    last: 2026/11/16 10:25:40.41
+  vrf: default
+  Description: to-r3
+  index 1592 metric 0 mtu 1500 speed 10000 txqlen 1000
+  flags: <BROADCAST,MULTICAST>
+  Type: Ethernet
+  HWaddr: aa:c1:ab:51:c8:22
+  inet 10.0.23.1/30
+  Interface Type Veth
+  Interface Slave Type None
+  protodown: off 
+  Parent ifindex: 1593
+

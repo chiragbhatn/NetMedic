@@ -1,0 +1,5 @@
+Routing entry for 10.255.0.1/32
+  Known via "ospf", distance 110, metric 1, best
+  Last update 02:14:10 ago
+  * 10.0.12.1, via eth1, weight 1
+

@@ -1,0 +1,67 @@
+! Command: show running-config
+! device: r3 (cEOSLab, EOS-4.32.0F-36401836.4320F (engineering build))
+!
+no aaa root
+!
+username admin privilege 15 role network-admin secret sha512 $6$nEtMeDiC1ab$3ZJaXdFbpoY6NRAglLSZdv2KSA2UdgXND8aYeJI7.pNb3qh5EbRX7tLkfPUqZXEET8syCl/ZeL0W/yFvi4YxS.
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+hostname r3
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vrf instance MGMT
+!
+interface Ethernet1
+   description to-r2
+   no switchport
+   ip address 10.0.23.2/30
+   ip ospf network point-to-point
+!
+interface Ethernet2
+   description to-host2
+   no switchport
+   ip address 192.168.3.1/24
+   ip access-group BLOCK-SSH-HOST2 out
+!
+interface Loopback0
+   ip address 10.255.0.3/32
+!
+interface Management0
+   vrf MGMT
+   ip address 172.20.20.13/24
+!
+ip access-list BLOCK-SSH-HOST2
+   counters per-entry
+   10 deny tcp any host 192.168.3.10 eq ssh
+   20 permit ip any any
+!
+ip routing
+no ip routing vrf MGMT
+!
+ip route vrf MGMT 0.0.0.0/0 172.20.20.1
+!
+router bgp 65003
+   router-id 10.255.0.3
+   neighbor 10.0.23.1 remote-as 65002
+   neighbor 10.0.23.1 maximum-routes 12000
+   network 192.168.3.0/24
+!
+router ospf 1
+   router-id 10.255.0.3
+   network 10.0.23.0/30 area 0.0.0.0
+   network 10.255.0.3/32 area 0.0.0.0
+   max-lsa 12000
+!
+management ssh
+   vrf MGMT
+      no shutdown
+!
+end

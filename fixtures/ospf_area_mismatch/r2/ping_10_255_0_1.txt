@@ -1,0 +1,2 @@
+PING 10.255.0.1 (10.255.0.1): 56 data bytes
+ping: sendto: Network unreachable

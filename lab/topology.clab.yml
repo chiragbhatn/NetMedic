@@ -1,0 +1,77 @@
+# NetMedic lab: host1 --- r1 (FRR) --- r2 (FRR) --- r3 (cEOS) --- host2
+# Addressing and routing: see SPEC.md section 4 and lab/golden/.
+# NOT YET VERIFIED ON A LIVE LAB. See lab/README.md.
+#
+# Lab-only SSH credentials are admin / admin on every node (r3's password hash is
+# in golden/r3.cfg; r1, r2, host1, host2 get the user from the exec steps below).
+
+name: netmedic
+
+mgmt:
+  network: clab
+  ipv4-subnet: 172.20.20.0/24
+
+topology:
+  nodes:
+    r1:
+      kind: linux
+      image: quay.io/frrouting/frr:10.2.1
+      mgmt-ipv4: 172.20.20.11
+      binds:
+        - frr/daemons:/etc/frr/daemons
+        - golden/r1.cfg:/etc/frr/frr.conf
+      exec:
+        - sysctl -w net.ipv4.ip_forward=1
+        # FRR images ship no SSH server: install and start one (needs internet at deploy time).
+        - sh -c "apk add --no-cache openssh-server && ssh-keygen -A && adduser -D -s /bin/sh admin && echo admin:admin | chpasswd && addgroup admin frrvty && /usr/sbin/sshd"
+        # Drop the Docker default route so a missing route means "unreachable", not a leak via mgmt.
+        - ip route del default
+
+    r2:
+      kind: linux
+      image: quay.io/frrouting/frr:10.2.1
+      mgmt-ipv4: 172.20.20.12
+      binds:
+        - frr/daemons:/etc/frr/daemons
+        - golden/r2.cfg:/etc/frr/frr.conf
+      exec:
+        - sysctl -w net.ipv4.ip_forward=1
+        - sh -c "apk add --no-cache openssh-server && ssh-keygen -A && adduser -D -s /bin/sh admin && echo admin:admin | chpasswd && addgroup admin frrvty && /usr/sbin/sshd"
+        - ip route del default
+
+    r3:
+      kind: arista_ceos
+      image: ceos:4.32.0F          # import it yourself, see lab/README.md
+      mgmt-ipv4: 172.20.20.13
+      startup-config: golden/r3.cfg
+
+    host1:
+      kind: linux
+      image: ghcr.io/hellt/network-multitool:latest
+      mgmt-ipv4: 172.20.20.21
+      exec:
+        - ip addr add 192.168.1.10/24 dev eth1
+        - sh -c "apk add --no-cache openssh-server && ssh-keygen -A && adduser -D -s /bin/sh admin && echo admin:admin | chpasswd && /usr/sbin/sshd"
+        - ip route replace default via 192.168.1.1 dev eth1
+
+    host2:
+      kind: linux
+      image: ghcr.io/hellt/network-multitool:latest
+      mgmt-ipv4: 172.20.20.22
+      exec:
+        - ip addr add 192.168.3.10/24 dev eth1
+        - sh -c "apk add --no-cache openssh-server && ssh-keygen -A && adduser -D -s /bin/sh admin && echo admin:admin | chpasswd && /usr/sbin/sshd"
+        - ip route replace default via 192.168.3.1 dev eth1
+
+  # MTU 1500 on every link: cEOS uses an IP MTU of 1500, and OSPF will not form a
+  # full adjacency between FRR and cEOS if the veth MTU (containerlab default 9500)
+  # does not match.
+  links:
+    - endpoints: ["host1:eth1", "r1:eth2"]
+      mtu: 1500
+    - endpoints: ["r1:eth1", "r2:eth1"]
+      mtu: 1500
+    - endpoints: ["r2:eth2", "r3:eth1"]     # r3 eth1 = Ethernet1
+      mtu: 1500
+    - endpoints: ["r3:eth2", "host2:eth1"]  # r3 eth2 = Ethernet2
+      mtu: 1500

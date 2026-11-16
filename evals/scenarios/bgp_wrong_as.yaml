@@ -1,0 +1,5 @@
+id: bgp_wrong_as
+problem: "r3 is not receiving the host1 subnet"
+expected: {fault_type: bgp_wrong_remote_as, device: r3}
+inject:  {device: r3, commands: ["router bgp 65003", "neighbor 10.0.23.1 remote-as 65099"]}
+restore: {device: r3, commands: ["router bgp 65003", "neighbor 10.0.23.1 remote-as 65002"]}

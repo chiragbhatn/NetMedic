@@ -1,0 +1,2 @@
+traceroute to 10.255.0.2 (10.255.0.2), 30 hops max, 46 byte packets
+traceroute: sendto: Network unreachable

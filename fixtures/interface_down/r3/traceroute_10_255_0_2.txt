@@ -1,0 +1,2 @@
+traceroute to 10.255.0.2 (10.255.0.2), 30 hops max, 60 byte packets
+connect: Network is unreachable

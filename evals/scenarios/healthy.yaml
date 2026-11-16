@@ -1,0 +1,5 @@
+id: healthy
+problem: "is anything wrong between host1 and host2?"
+expected: {fault_type: none, device: null}
+inject:  {device: null, commands: []}
+restore: {device: null, commands: []}

@@ -1,0 +1,5 @@
+Routing entry for 192.168.1.0/24
+  Known via "connected", distance 0, metric 0, best
+  Last update 02:14:53 ago
+  * directly connected, eth2
+

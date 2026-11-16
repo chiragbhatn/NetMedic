@@ -1,0 +1,23 @@
+Ethernet2 is up, line protocol is up (connected)
+  Hardware is Ethernet, address is 001c.7368.a1f3 (bia aac1.ab64.e932)
+  Description: to-host2
+  Internet address is 192.168.3.1/24
+  Broadcast address is 255.255.255.255
+  IP MTU 1500 bytes
+  Full-duplex, 1Gb/s, auto negotiation: off, uni-link: n/a
+  Up 2 hours, 14 minutes, 53 seconds
+  Loopback Mode : None
+  1 link status changes since last clear
+  Last clearing of "show interface" counters never
+  5 minutes input rate 347 bps (0.0% with framing overhead), 0 packets/sec
+  5 minutes output rate 266 bps (0.0% with framing overhead), 0 packets/sec
+     3439 packets input, 337022 bytes
+     Received 0 broadcasts, 68 multicast
+     0 runts, 0 giants
+     0 input errors, 0 CRC, 0 alignment, 0 symbol, 0 input discards
+     0 PAUSE input
+     3409 packets output, 330673 bytes
+     Sent 0 broadcasts, 102 multicast
+     0 output errors, 0 collisions
+     0 late collision, 0 deferred, 0 output discards
+     0 PAUSE output

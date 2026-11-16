@@ -1,0 +1,22 @@
+Management0 is up, line protocol is up (connected)
+  Hardware is Ethernet, address is 0242.ac14.140d (bia 0242.ac14.140d)
+  Internet address is 172.20.20.13/24
+  Broadcast address is 255.255.255.255
+  IP MTU 1500 bytes
+  Full-duplex, 1Gb/s, auto negotiation: off, uni-link: n/a
+  Up 2 hours, 15 minutes, 31 seconds
+  Loopback Mode : None
+  1 link status changes since last clear
+  Last clearing of "show interface" counters never
+  5 minutes input rate 366 bps (0.0% with framing overhead), 0 packets/sec
+  5 minutes output rate 376 bps (0.0% with framing overhead), 0 packets/sec
+     3791 packets input, 371518 bytes
+     Received 0 broadcasts, 75 multicast
+     0 runts, 0 giants
+     0 input errors, 0 CRC, 0 alignment, 0 symbol, 0 input discards
+     0 PAUSE input
+     3787 packets output, 367339 bytes
+     Sent 0 broadcasts, 113 multicast
+     0 output errors, 0 collisions
+     0 late collision, 0 deferred, 0 output discards
+     0 PAUSE output

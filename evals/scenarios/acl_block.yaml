@@ -1,0 +1,20 @@
+id: acl_block
+problem: "ping to host2 works but SSH fails"
+expected: {fault_type: acl_blocking, device: r3}
+inject:
+  device: r3
+  commands:
+    - "ip access-list BLOCK-SSH-HOST2"
+    - "counters per-entry"
+    - "10 deny tcp any host 192.168.3.10 eq ssh"
+    - "20 permit ip any any"
+    - "exit"
+    - "interface Ethernet2"
+    - "ip access-group BLOCK-SSH-HOST2 out"
+restore:
+  device: r3
+  commands:
+    - "interface Ethernet2"
+    - "no ip access-group BLOCK-SSH-HOST2 out"
+    - "exit"
+    - "no ip access-list BLOCK-SSH-HOST2"

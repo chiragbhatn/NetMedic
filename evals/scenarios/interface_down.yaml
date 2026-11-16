@@ -1,0 +1,5 @@
+id: interface_down
+problem: "host1 cannot reach host2"
+expected: {fault_type: interface_down, device: r2}
+inject:  {device: r2, commands: ["interface eth2", "shutdown"]}
+restore: {device: r2, commands: ["interface eth2", "no shutdown"]}

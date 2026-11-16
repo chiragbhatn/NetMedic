@@ -1,0 +1,5 @@
+Routing entry for 192.168.3.0/24
+  Known via "bgp", distance 20, metric 0, best
+  Last update 02:13:54 ago
+  * 10.0.12.2, via eth1, weight 1
+

@@ -1,0 +1,6 @@
+Loopback0 is up, line protocol is up (connected)
+  Hardware is Loopback
+  Internet address is 10.255.0.3/32
+  Broadcast address is 255.255.255.255
+  IP MTU 65535 bytes
+  Up 2 hours, 14 minutes, 53 seconds

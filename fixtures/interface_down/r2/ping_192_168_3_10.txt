@@ -1,0 +1,2 @@
+PING 192.168.3.10 (192.168.3.10): 56 data bytes
+ping: sendto: Network unreachable
