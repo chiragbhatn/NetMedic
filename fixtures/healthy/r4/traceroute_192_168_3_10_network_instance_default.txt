@@ -1,0 +1,5 @@
+Using network instance default
+traceroute to 192.168.3.10 (192.168.3.10), 30 hops max, 60 byte packets
+ 1  10.0.24.1 (10.0.24.1)  0.097 ms  0.104 ms  0.077 ms
+ 2  10.0.23.2 (10.0.23.2)  0.412 ms  0.409 ms  0.549 ms
+ 3  192.168.3.10 (192.168.3.10)  0.579 ms  0.508 ms  0.597 ms

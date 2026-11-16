@@ -11,6 +11,10 @@ devices:
     host: clab-netmedic-r3
     platform: arista_eos
     role: router
+  r4:
+    host: clab-netmedic-r4
+    platform: nokia_srlinux
+    role: router
   host1:
     host: clab-netmedic-host1
     platform: linux
@@ -19,3 +23,16 @@ devices:
     host: clab-netmedic-host2
     platform: linux
     role: host
+  host3:
+    host: clab-netmedic-host3
+    platform: linux
+    role: host
+
+# Physical topology, for display only (optional).
+links:
+  - [host1, r1]
+  - [r1, r2]
+  - [r2, r3]
+  - [r3, host2]
+  - [r2, r4]
+  - [r4, host3]

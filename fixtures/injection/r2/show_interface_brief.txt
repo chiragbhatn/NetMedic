@@ -3,5 +3,6 @@ Interface       Status  VRF             Addresses
 eth0            up      default         172.20.20.12/24
 eth1            up      default         10.0.12.2/30
 eth2            down    default         10.0.23.1/30
+eth3            up      default         10.0.24.1/30
 lo              up      default         10.255.0.2/32
 

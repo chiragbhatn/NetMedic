@@ -16,4 +16,5 @@ L>* 172.20.20.11/32 is directly connected, eth0, 02:15:31
 C>* 192.168.1.0/24 is directly connected, eth2, 02:14:53
 L>* 192.168.1.1/32 is directly connected, eth2, 02:14:53
 B>* 192.168.3.0/24 [20/0] via 10.0.12.2, eth1, weight 1, 02:13:54
+B>* 192.168.4.0/24 [20/0] via 10.0.12.2, eth1, weight 1, 02:13:46
 

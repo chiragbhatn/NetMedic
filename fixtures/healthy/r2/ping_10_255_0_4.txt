@@ -1,0 +1,8 @@
+PING 10.255.0.4 (10.255.0.4): 56 data bytes
+64 bytes from 10.255.0.4: seq=0 ttl=64 time=0.916 ms
+64 bytes from 10.255.0.4: seq=1 ttl=64 time=0.362 ms
+64 bytes from 10.255.0.4: seq=2 ttl=64 time=0.523 ms
+
+--- 10.255.0.4 ping statistics ---
+3 packets transmitted, 3 packets received, 0% packet loss
+round-trip min/avg/max = 0.362/0.600/0.916 ms

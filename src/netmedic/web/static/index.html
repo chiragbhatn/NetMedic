@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>NetMedic</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <h1 class="brand">NetMedic</h1>
+    <p class="tagline">Network fault diagnosis, step by step</p>
+    <dl class="runinfo">
+      <div><dt>Mode</dt><dd id="mode" class="badge">loading</dd></div>
+      <div><dt>Model</dt><dd id="model">loading</dd></div>
+    </dl>
+  </header>
+
+  <main class="layout">
+    <section class="panel controls" aria-labelledby="controls-title">
+      <h2 id="controls-title">Problem</h2>
+      <form id="run-form" novalidate>
+        <label for="problem">Describe what is wrong</label>
+        <textarea id="problem" name="problem" rows="3" maxlength="500" required
+                  placeholder="host1 cannot reach host2"></textarea>
+        <div class="row" id="scenario-row" hidden>
+          <label for="scenario">Recorded scenario</label>
+          <select id="scenario" name="scenario"></select>
+        </div>
+        <div class="row actions">
+          <button type="submit" id="run" class="primary" disabled>Run diagnosis</button>
+          <p class="notice">Each run calls the Claude API and uses tokens. The agent only
+            reads from devices; it never changes them.</p>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel topology" aria-labelledby="topology-title">
+      <h2 id="topology-title">Topology</h2>
+      <div id="topology" class="topology-canvas"></div>
+      <p class="legend">
+        <span class="key key-router"></span> router
+        <span class="key key-host"></span> host
+        <span class="key key-queried"></span> queried
+        <span class="key key-fault"></span> fault
+      </p>
+    </section>
+
+    <section class="panel work" aria-labelledby="work-title">
+      <div class="work-head">
+        <h2 id="work-title">Diagnosis</h2>
+        <p id="status" class="status" role="status" aria-live="polite">Ready.</p>
+      </div>
+      <div id="problem-banner" class="problem-banner" hidden></div>
+      <div id="failure" class="failure" role="alert" hidden>
+        <p id="failure-text"></p>
+        <button type="button" id="reload">Reload results</button>
+      </div>
+      <p id="empty" class="empty">Describe a problem and run a diagnosis. Each tool call the
+        agent makes appears here as it happens.</p>
+      <ol id="timeline" class="timeline" aria-label="Tool calls"></ol>
+      <section id="report" class="report" aria-labelledby="report-title" tabindex="-1" hidden>
+        <h3 id="report-title">Report</h3>
+        <div id="report-body"></div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

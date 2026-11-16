@@ -1,4 +1,5 @@
 import json
+import re
 from types import SimpleNamespace
 
 import anthropic
@@ -50,6 +51,15 @@ def fake_llm() -> FakeLLM:
     ])
 
 
+@pytest.fixture(autouse=True, params=[40, 300], ids=["narrow", "wide"])
+def console_width(request, monkeypatch):
+    """Run every CLI test on a narrow and a wide console: output must not depend on the
+    terminal width (CI runners report 80 columns, Windows reports the real console)."""
+    monkeypatch.setattr(cli, "console", cli.make_console(width=request.param))
+    monkeypatch.setattr(cli, "err", cli.make_console(stderr=True, width=request.param))
+    return request.param
+
+
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     (tmp_path / "inventory.yaml").write_text(INVENTORY)
@@ -63,15 +73,87 @@ def project(tmp_path, monkeypatch):
     (scenarios / "interface_down.yaml").write_text(SCENARIO)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "make_llm", fake_llm)
-    for var in ("NETMEDIC_SSH_USERNAME", "NETMEDIC_SSH_PASSWORD"):
+    for var in ("NETMEDIC_SSH_USERNAME", "NETMEDIC_SSH_PASSWORD", "NETMEDIC_INVENTORY",
+                "NETBOX_URL", "NETBOX_TOKEN", "NETBOX_TAG"):
         monkeypatch.delenv(var, raising=False)
     return tmp_path
+
+
+# --- netmedic inventory -------------------------------------------------------------------
+
+def test_inventory_command_yaml(project):
+    (project / "inventory.yaml").write_text(INVENTORY + "links:\n  - [r1, r2]\n  - [r1, r9]\n")
+    result = runner.invoke(cli.app, ["inventory"])
+    assert result.exit_code == 0, result.output
+    assert f"Source: {project / 'inventory.yaml'}" in result.stdout
+    assert "r1" in result.stdout and "frr" in result.stdout and "Links: r1-r2" in result.stdout
+    assert "ignored link" in result.stderr and "ignored link" not in result.stdout
+
+
+def stub_netbox():
+    from types import SimpleNamespace as NS
+
+    def device(name, slug, ip):
+        return NS(name=name, platform=NS(slug=slug), role=NS(slug="router"),
+                  primary_ip4=NS(address=ip), custom_fields={})
+
+    class Endpoint:
+        def __init__(self, objects):
+            self.objects = objects
+
+        def filter(self, **kwargs):
+            return iter(self.objects)
+
+    return NS(dcim=NS(devices=Endpoint([device("r2", "frr", "10.0.0.2/24"),
+                                        device("leaf9", "nokia-srlinux", "10.0.0.9/24"),
+                                        device("sw1", "cisco-ios", "10.0.0.5/24")])),
+              virtualization=NS(virtual_machines=Endpoint([])))
+
+
+@pytest.fixture
+def netbox_env(project, monkeypatch):
+    import netmedic.netbox as netbox
+
+    real = netbox.load_from_netbox
+    monkeypatch.setattr(netbox, "load_from_netbox",
+                        lambda url, token, tag="netmedic", api=None:
+                        real(url, token, tag=tag, api=stub_netbox()))
+    monkeypatch.setenv("NETMEDIC_INVENTORY", "netbox")
+    monkeypatch.setenv("NETBOX_URL", "https://nb.example.test")
+    monkeypatch.setenv("NETBOX_TOKEN", "secret-token-123")
+    return project
+
+
+def test_inventory_command_netbox(netbox_env):
+    result = runner.invoke(cli.app, ["inventory"])
+    assert result.exit_code == 0, result.output
+    assert "Source: NetBox https://nb.example.test" in result.stdout
+    rows = [line.split() for line in result.stdout.splitlines()[1:]]
+    assert rows == [["NAME", "PLATFORM", "ROLE", "HOST", "PORT"],
+                    ["r2", "frr", "router", "10.0.0.2", "22"],
+                    ["leaf9", "nokia_srlinux", "router", "10.0.0.9", "22"]]
+    assert "sw1: platform 'cisco-ios' is not supported" in result.stderr
+    assert "secret-token-123" not in result.output
+
+
+def test_inventory_command_error(project, monkeypatch):
+    monkeypatch.setenv("NETMEDIC_INVENTORY", "netbox")
+    result = runner.invoke(cli.app, ["inventory"])
+    assert result.exit_code == 2 and "NETBOX_URL" in result.stderr
+
+
+def test_replay_with_netbox_warns_about_missing_fixtures(netbox_env):
+    result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"])
+    assert result.exit_code == 0, result.output
+    warning = " ".join(result.stderr.split())
+    assert "no fixtures/healthy/ directory for NetBox device(s) leaf9" in warning
+    assert "r2" not in warning.split("device(s)")[1]  # r2 has fixtures
 
 
 def test_help_lists_commands():
     result = runner.invoke(cli.app, ["--help"])
     assert result.exit_code == 0
-    for command in ("diagnose", "approve", "rollback", "mcp", "eval", "record"):
+    for command in ("diagnose", "approve", "rollback", "mcp", "eval", "record", "inventory"):
         assert command in result.output
 
 
@@ -133,7 +215,7 @@ def test_diagnose_shows_provider_and_cached_tokens(project, monkeypatch):
         return labelled
 
     monkeypatch.setattr(cli, "make_llm", make)
-    result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"], env={"COLUMNS": "200"})
+    result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"])
     assert result.exit_code == 0, result.output
     assert "LLM: anthropic / claude-haiku-5-5" in result.output
     assert "300 input (150 cached) / 30 output" in result.output
@@ -151,16 +233,40 @@ def test_submit_report_step_line_is_short(project, monkeypatch):
         ])
 
     monkeypatch.setattr(cli, "make_llm", make)
-    result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"], env={"COLUMNS": "300"})
+    result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"])
     assert result.exit_code == 0, result.output
     lines = result.output.splitlines()
     [submit_line] = [line for line in lines if "submit_report" in line]
     assert "fault_type=interface_down device=r2 -> Report accepted." in submit_line
     assert "evidence line" not in submit_line
     [show_line] = [line for line in lines if " run_show " in line]
-    assert '..."' not in show_line and "..." in show_line and len(show_line) < 300
+    shown_args = show_line.split(" run_show ", 1)[1].split(" -> ", 1)[0]
+    assert shown_args.endswith("...") and len(shown_args) == cli.MAX_ARGS_SHOWN + 3
     # the full report, evidence included, is still printed once at the end
     assert sum("evidence line 0" in line for line in lines) == 1
+
+
+def test_every_step_is_one_line_on_a_narrow_terminal(project, monkeypatch):
+    monkeypatch.setattr(cli, "console", cli.make_console(width=40))
+    long_args = {"device": "r2", "command": "show " + "interface " * 40}
+
+    def make():
+        return FakeLLM([
+            LLMResponse(None, [ToolCall("c0", "list_devices", {}),
+                               ToolCall("c1", "run_show", long_args)], 10, 1),
+            LLMResponse(None, [ToolCall("c2", "get_interfaces", {"device": "r2"})], 10, 1),
+            LLMResponse(None, [ToolCall("c3", "submit_report", REPORT)], 10, 1),
+        ])
+
+    monkeypatch.setattr(cli, "make_llm", make)
+    result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"])
+    assert result.exit_code == 0, result.output
+    step_lines = [line for line in result.output.splitlines()
+                  if re.match(r"^\s*\d+ (list_devices|run_show|get_interfaces|submit_report) ",
+                              line)]
+    assert len(step_lines) == 4
+    assert all(" -> " in line for line in step_lines)  # nothing spilled onto a second line
+    assert any(len(line) > 40 for line in step_lines)  # wider than the console, not wrapped
 
 
 def test_live_without_credentials_fails_cleanly(project):

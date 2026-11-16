@@ -1,0 +1,15 @@
+Interface eth3 is up, line protocol is up
+  Link ups:       1    last: 2026/11/16 08:15:14.17
+  Link downs:     0    last: (never)
+  vrf: default
+  Description: to-r4
+  index 1600 metric 0 mtu 1500 speed 10000 txqlen 1000
+  flags: <UP,BROADCAST,RUNNING,MULTICAST>
+  Type: Ethernet
+  HWaddr: aa:c1:ab:6b:24:23
+  inet 10.0.24.1/30
+  Interface Type Veth
+  Interface Slave Type None
+  protodown: off 
+  Parent ifindex: 1601
+

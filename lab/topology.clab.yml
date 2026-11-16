@@ -1,9 +1,13 @@
-# NetMedic lab: host1 --- r1 (FRR) --- r2 (FRR) --- r3 (cEOS) --- host2
+# NetMedic lab:
+#   host1 --- r1 (FRR) --- r2 (FRR) --- r3 (cEOS) --- host2
+#                           |
+#                          r4 (SR Linux) --- host3
 # Addressing and routing: see SPEC.md section 4 and lab/golden/.
 # NOT YET VERIFIED ON A LIVE LAB. See lab/README.md.
 #
-# Lab-only SSH credentials are admin / admin on every node (r3's password hash is
-# in golden/r3.cfg; r1, r2, host1, host2 get the user from the exec steps below).
+# Lab-only SSH credentials are admin / admin on every node (r3's and r4's password
+# hashes are in golden/r3.cfg and golden/r4.cfg; r1, r2 and the hosts get the user from
+# the exec steps below).
 
 name: netmedic
 
@@ -45,6 +49,14 @@ topology:
       mgmt-ipv4: 172.20.20.13
       startup-config: golden/r3.cfg
 
+    r4:
+      kind: nokia_srlinux
+      image: ghcr.io/nokia/srlinux:24.10.1
+      mgmt-ipv4: 172.20.20.14
+      # SR Linux CLI "set / ..." commands (the `info flat` output), applied on top of
+      # containerlab's default config. It also sets the admin password to "admin".
+      startup-config: golden/r4.cfg
+
     host1:
       kind: linux
       image: ghcr.io/hellt/network-multitool:latest
@@ -63,7 +75,16 @@ topology:
         - sh -c "apk add --no-cache openssh-server && ssh-keygen -A && adduser -D -s /bin/sh admin && echo admin:admin | chpasswd && /usr/sbin/sshd"
         - ip route replace default via 192.168.3.1 dev eth1
 
-  # MTU 1500 on every link: cEOS uses an IP MTU of 1500, and OSPF will not form a
+    host3:
+      kind: linux
+      image: ghcr.io/hellt/network-multitool:latest
+      mgmt-ipv4: 172.20.20.23
+      exec:
+        - ip addr add 192.168.4.10/24 dev eth1
+        - sh -c "apk add --no-cache openssh-server && ssh-keygen -A && adduser -D -s /bin/sh admin && echo admin:admin | chpasswd && /usr/sbin/sshd"
+        - ip route replace default via 192.168.4.1 dev eth1
+
+  # MTU 1500 on every link: cEOS and SR Linux use an IP MTU of 1500, and OSPF will not form a
   # full adjacency between FRR and cEOS if the veth MTU (containerlab default 9500)
   # does not match.
   links:
@@ -74,4 +95,8 @@ topology:
     - endpoints: ["r2:eth2", "r3:eth1"]     # r3 eth1 = Ethernet1
       mtu: 1500
     - endpoints: ["r3:eth2", "host2:eth1"]  # r3 eth2 = Ethernet2
+      mtu: 1500
+    - endpoints: ["r2:eth3", "r4:e1-1"]     # r4 e1-1 = ethernet-1/1
+      mtu: 1500
+    - endpoints: ["r4:e1-2", "host3:eth1"]  # r4 e1-2 = ethernet-1/2
       mtu: 1500

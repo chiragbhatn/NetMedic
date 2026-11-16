@@ -7,10 +7,14 @@ from netmedic.audit import AuditLog
 from netmedic.drivers import ReplayDriver, slugify
 from netmedic.guardrails import MAX_OUTPUT_CHARS
 from netmedic.inventory import Device, Inventory
+from netmedic.platforms import PROBE_TARGETS, ROUTER_PLATFORMS, probe_command, record_commands
 from netmedic.tools.toolbox import ChangeProposal, Toolbox, clean_running_config
 
 RUNNING = "hostname r1\ninterface eth2\n shutdown\n"
 GOLDEN = "hostname r1\ninterface eth2\n no shutdown\n"
+
+SRL_GOLDEN = "set / interface ethernet-1/1 admin-state enable\nset / system name host-name r4\n"
+SRL_RUNNING = "set / interface ethernet-1/1 admin-state disable\nset / system name host-name r4\n"
 
 FIXTURES = {
     "r1": {
@@ -30,6 +34,18 @@ FIXTURES = {
         "show ip access-lists": "r3 acls",
         "show running-config": "hostname r3\n",
     },
+    "r4": {
+        "show interface brief": "r4 brief",
+        "show interface ethernet-1/1": "r4 ethernet-1/1 detail",
+        "show network-instance default route-table ipv4-unicast summary": "r4 routes",
+        "show network-instance default route-table ipv4-unicast prefix 192.168.1.0/24":
+            "r4 route to host1 lan",
+        "show network-instance default protocols ospf neighbor": "r4 ospf",
+        "show network-instance default protocols bgp neighbor": "r4 bgp",
+        "info flat": SRL_RUNNING,
+        "ping 192.168.1.10 network-instance default": "r4 ping ok",
+        "traceroute 192.168.1.10 network-instance default": "r4 trace",
+    },
     "host1": {"ip addr": "host1 addrs", "ip route": "host1 routes", "ping 192.168.3.10": "ok"},
 }
 
@@ -46,9 +62,11 @@ def env(tmp_path):
     golden.mkdir()
     (golden / "r1.cfg").write_text(GOLDEN)
     (golden / "r3.cfg").write_text("hostname r3\n")
+    (golden / "r4.cfg").write_text(SRL_GOLDEN)
     inventory = Inventory({
         "r1": Device("r1", "clab-netmedic-r1", "frr", "router"),
         "r3": Device("r3", "clab-netmedic-r3", "arista_eos", "router"),
+        "r4": Device("r4", "clab-netmedic-r4", "nokia_srlinux", "router"),
         "host1": Device("host1", "clab-netmedic-host1", "linux", "host"),
     })
     return tmp_path, inventory, ReplayDriver(fixtures)
@@ -100,6 +118,16 @@ def test_specs_are_valid_json_schema_objects(env):
         ("get_config", {"device": "r1"}, RUNNING),
         ("ping", {"device": "r1", "target": "192.168.3.10"}, "r1 ping ok"),
         ("traceroute", {"device": "r1", "target": "192.168.3.10"}, "r1 trace"),
+        ("get_interfaces", {"device": "r4"}, "r4 brief"),
+        ("get_interfaces", {"device": "r4", "interface": "ethernet-1/1"}, "r4 ethernet-1/1 detail"),
+        ("get_routes", {"device": "r4"}, "r4 routes"),
+        ("get_routes", {"device": "r4", "prefix": "192.168.1.0/24"}, "r4 route to host1 lan"),
+        ("get_neighbors", {"device": "r4", "protocol": "ospf"}, "r4 ospf"),
+        ("get_neighbors", {"device": "r4", "protocol": "bgp"}, "r4 bgp"),
+        ("get_config", {"device": "r4"}, SRL_RUNNING),
+        ("run_show", {"device": "r4", "command": "info flat"}, SRL_RUNNING),
+        ("ping", {"device": "r4", "target": "192.168.1.10"}, "r4 ping ok"),
+        ("traceroute", {"device": "r4", "target": "192.168.1.10"}, "r4 trace"),
     ],
 )
 def test_read_tools(env, name, arguments, expected):
@@ -108,7 +136,7 @@ def test_read_tools(env, name, arguments, expected):
 
 def test_list_devices(env):
     devices = json.loads(make(env).call("list_devices", {}))
-    assert {d["name"] for d in devices} == {"r1", "r3", "host1"}
+    assert {d["name"] for d in devices} == {"r1", "r3", "r4", "host1"}
 
 
 def test_diff_against_golden(env):
@@ -116,6 +144,56 @@ def test_diff_against_golden(env):
     diff = tb.call("diff_against_golden", {"device": "r1"})
     assert "- no shutdown" in diff and "+ shutdown" in diff
     assert tb.call("diff_against_golden", {"device": "r3"}) == "No differences"
+
+
+def test_diff_against_golden_srl(env):
+    diff = make(env).call("diff_against_golden", {"device": "r4"})
+    assert "-set / interface ethernet-1/1 admin-state enable" in diff
+    assert "+set / interface ethernet-1/1 admin-state disable" in diff
+
+
+@pytest.mark.parametrize("command", ["info from candidate", "enter candidate", "commit now",
+                                     "info flat; commit now", "tools system reboot"])
+def test_srl_state_changing_commands_rejected(env, command):
+    result = make(env).call("run_show", {"device": "r4", "command": command})
+    assert result.startswith("ERROR")
+
+
+def test_info_rejected_off_srl(env):
+    assert make(env).call("run_show", {"device": "r1", "command": "info flat"}).startswith("ERROR")
+
+
+def test_platform_commands_unchanged_for_existing_platforms():
+    r1 = record_commands("r1", "frr")
+    assert r1[:6] == ["show interface brief", "show ip route", "show ip ospf neighbor",
+                      "show ip ospf interface", "show ip bgp summary", "show running-config"]
+    r3 = record_commands("r3", "arista_eos")
+    assert r3[:7] == ["show ip interface brief", "show ip route", "show ip ospf neighbor",
+                      "show ip ospf interface", "show ip bgp summary", "show running-config",
+                      "show ip access-lists"]
+    assert "show interfaces Ethernet1" in r3 and "show ip route 192.168.3.0/24" in r3
+    assert record_commands("host1", "linux")[:2] == ["ip addr", "ip route"]
+    for platform in ("frr", "arista_eos", "linux"):
+        assert probe_command(platform, "ping", "10.0.0.1") == "ping 10.0.0.1"
+        assert probe_command(platform, "traceroute", "10.0.0.1") == "traceroute 10.0.0.1"
+
+
+def test_srl_record_commands():
+    assert "nokia_srlinux" in ROUTER_PLATFORMS
+    r4 = record_commands("r4", "nokia_srlinux")
+    assert r4[:6] == [
+        "show interface brief",
+        "show network-instance default route-table ipv4-unicast summary",
+        "show network-instance default protocols ospf neighbor",
+        "show network-instance default protocols ospf interface",
+        "show network-instance default protocols bgp neighbor",
+        "info flat",
+    ]
+    assert "show interface ethernet-1/1" in r4
+    assert "show network-instance default route-table ipv4-unicast prefix 10.255.0.4/32" in r4
+    for target in PROBE_TARGETS:
+        assert f"ping {target} network-instance default" in r4
+        assert f"traceroute {target} network-instance default" in r4
 
 
 def test_diff_ignores_frr_preamble(env):
@@ -171,6 +249,50 @@ def test_failures_return_error_and_audit_once(env, name, arguments):
     result = make(env).call(name, arguments)
     assert result.startswith("ERROR: ")
     assert len(audit_lines(env)) == 1
+
+
+@pytest.mark.parametrize("command", ["show ip addr", "show ip route"])
+def test_show_on_linux_host_is_rejected_before_the_driver(env, command):
+    result = make(env).call("run_show", {"device": "host1", "command": command})
+    assert result == ("ERROR: linux hosts have no 'show' commands; use 'ip addr' or "
+                      "'ip route' (or the get_interfaces / get_routes tools)")
+
+
+def test_tool_descriptions_explain_platform_rules(env):
+    specs = {s.name: s.description for s in make(env).specs()}
+    assert "linux hosts have no 'show'" in specs["run_show"]
+    assert ("configuration lines only; entering config mode and committing are handled by "
+            "NetMedic") in specs["propose_change"]
+
+
+@pytest.mark.parametrize(("device", "commands", "message"), [
+    ("r4", ["set / interface ethernet-1/1 admin-state enable", "commit now"],
+     "ERROR: 'commit now' is not a configuration line: NetMedic enters candidate mode and "
+     "commits the change itself; send only 'set ...' configuration lines, e.g. "
+     "'set / interface ethernet-1/1 admin-state enable'"),
+    ("r4", ["enter candidate", "set / interface ethernet-1/1 admin-state enable"],
+     "ERROR: 'enter candidate' is not a configuration line"),
+    ("r1", ["configure terminal", "interface eth2", "no shutdown"],
+     "ERROR: 'configure terminal' is not a configuration line: NetMedic enters and leaves "
+     "configuration mode itself and does not save the config; send only the configuration "
+     "lines, e.g. ['interface eth2', 'no shutdown']"),
+    ("r3", ["interface Ethernet1", "no shutdown", "end", "write memory"],
+     "ERROR: 'end' is not a configuration line"),
+    ("r1", ["interface eth2", "no shutdown", "copy running-config startup-config"],
+     "ERROR: 'copy running-config startup-config' is not a configuration line"),
+])
+def test_propose_change_rejects_session_control(env, device, commands, message):
+    result = make(env).call("propose_change",
+                            {"device": device, "commands": commands, "reason": "x"})
+    assert result.startswith(message)
+    assert not (env[0] / "changes").exists() or not list((env[0] / "changes").glob("*.json"))
+
+
+def test_propose_change_accepts_srl_set_lines(env):
+    result = make(env).call("propose_change", {
+        "device": "r4", "commands": ["set / interface ethernet-1/1 admin-state enable"],
+        "reason": "admin down"})
+    assert json.loads(result)["status"] == "proposed"
 
 
 def test_missing_golden_is_error(env):

@@ -23,14 +23,20 @@ Gateway of last resort is not set
            via 10.0.23.1, Ethernet1
  C        10.0.23.0/30
            directly connected, Ethernet1
+ O        10.0.24.0/30 [110/11]
+           via 10.0.23.1, Ethernet1
  O        10.255.0.1/32 [110/11]
            via 10.0.23.1, Ethernet1
  O        10.255.0.2/32 [110/10]
            via 10.0.23.1, Ethernet1
  C        10.255.0.3/32
            directly connected, Loopback0
+ O        10.255.0.4/32 [110/21]
+           via 10.0.23.1, Ethernet1
  B E      192.168.1.0/24 [200/0]
            via 10.0.23.1, Ethernet1
  C        192.168.3.0/24
            directly connected, Ethernet2
+ B E      192.168.4.0/24 [200/0]
+           via 10.0.23.1, Ethernet1
 

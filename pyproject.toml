@@ -20,13 +20,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff"]
+netbox = ["pynetbox"]
+web = ["fastapi", "uvicorn"]
+dev = ["pytest", "ruff", "pynetbox", "fastapi", "uvicorn"]
 
 [project.scripts]
 netmedic = "netmedic.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"netmedic.web" = ["static/*"]
 
 [tool.ruff]
 line-length = 100

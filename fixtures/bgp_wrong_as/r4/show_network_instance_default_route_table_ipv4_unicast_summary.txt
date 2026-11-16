@@ -1,0 +1,27 @@
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+IPv4 unicast route table of network instance default
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
++---------------------+------------+--------------+--------+----------+--------+------+------------------------------+------------------+
+|       Prefix        | Route Type | Route Owner  | Active |  Origin  | Metric | Pref |       Next-hop (Type)        |    Next-hop      |
+|                     |            |              |        | Network  |        |      |                              |    Interface     |
+|                     |            |              |        | Instance |        |      |                              |                  |
++=====================+============+==============+========+==========+========+======+==============================+==================+
+| 10.0.12.0/30        | ospfv2     | ospf_mgr     | True   | default  | 11     | 10   | 10.0.24.1 (direct)           | ethernet-1/1.0   |
+| 10.0.23.0/30        | ospfv2     | ospf_mgr     | True   | default  | 11     | 10   | 10.0.24.1 (direct)           | ethernet-1/1.0   |
+| 10.0.24.0/30        | local      | net_inst_mgr | True   | default  | 0      | 0    | 10.0.24.2 (direct)           | ethernet-1/1.0   |
+| 10.0.24.2/32        | host       | net_inst_mgr | True   | default  | 0      | 0    | None (extract)               | None             |
+| 10.0.24.3/32        | host       | net_inst_mgr | True   | default  | 0      | 0    | None (broadcast)             |                  |
+| 10.255.0.1/32       | ospfv2     | ospf_mgr     | True   | default  | 11     | 10   | 10.0.24.1 (direct)           | ethernet-1/1.0   |
+| 10.255.0.2/32       | ospfv2     | ospf_mgr     | True   | default  | 10     | 10   | 10.0.24.1 (direct)           | ethernet-1/1.0   |
+| 10.255.0.3/32       | ospfv2     | ospf_mgr     | True   | default  | 21     | 10   | 10.0.24.1 (direct)           | ethernet-1/1.0   |
+| 10.255.0.4/32       | host       | net_inst_mgr | True   | default  | 0      | 0    | None (extract)               | None             |
+| 192.168.1.0/24      | bgp        | bgp_mgr      | True   | default  | 0      | 170  | 10.0.24.1 (indirect/local)   | ethernet-1/1.0   |
+| 192.168.4.0/24      | local      | net_inst_mgr | True   | default  | 0      | 0    | 192.168.4.1 (direct)         | ethernet-1/2.0   |
+| 192.168.4.1/32      | host       | net_inst_mgr | True   | default  | 0      | 0    | None (extract)               | None             |
+| 192.168.4.255/32    | host       | net_inst_mgr | True   | default  | 0      | 0    | None (broadcast)             |                  |
++---------------------+------------+--------------+--------+----------+--------+------+------------------------------+------------------+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+IPv4 routes total                    : 13
+IPv4 prefixes with active routes     : 13
+IPv4 prefixes with active ECMP routes: 0
+-----------------------------------------------------------------------------------------------------------------------------------------------------------

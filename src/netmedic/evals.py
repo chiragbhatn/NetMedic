@@ -19,7 +19,7 @@ from netmedic.drivers import ReplayDriver, SSHDriver
 from netmedic.drivers.base import Driver
 from netmedic.errors import CommandRejected, NetMedicError
 from netmedic.guardrails import validate_read_command
-from netmedic.inventory import Device, Inventory
+from netmedic.inventory import Device, Inventory, load_inventory
 from netmedic.llm import LLMClient
 from netmedic.tools.toolbox import Toolbox
 
@@ -195,7 +195,7 @@ def run_scenario(
     result = RunResult(scenario.id, run, False, scenario.expected_fault_type,
                        scenario.expected_device)
     try:
-        inventory = Inventory.load(root / "inventory.yaml")
+        inventory = load_inventory(root)
         inner: Driver = (
             ssh_driver_from_env() if live else ReplayDriver(root / "fixtures", scenario.id)
         )

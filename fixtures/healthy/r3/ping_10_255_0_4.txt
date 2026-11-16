@@ -1,0 +1,10 @@
+PING 10.255.0.4 (10.255.0.4) 72(100) bytes of data.
+80 bytes from 10.255.0.4: icmp_seq=1 ttl=63 time=0.478 ms
+80 bytes from 10.255.0.4: icmp_seq=2 ttl=63 time=0.232 ms
+80 bytes from 10.255.0.4: icmp_seq=3 ttl=63 time=0.158 ms
+80 bytes from 10.255.0.4: icmp_seq=4 ttl=63 time=0.241 ms
+80 bytes from 10.255.0.4: icmp_seq=5 ttl=63 time=0.220 ms
+
+--- 10.255.0.4 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 1ms
+rtt min/avg/max/mdev = 0.158/0.266/0.478/0.110 ms, ipg/ewma 0.505/0.264 ms

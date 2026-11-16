@@ -1,0 +1,6 @@
+id: srl_interface_down
+problem: "host3 cannot reach host1"
+expected: {fault_type: interface_down, device: r4}
+# SR Linux config commands; the driver wraps them in `enter candidate` ... `commit now`.
+inject:  {device: r4, commands: ["set / interface ethernet-1/1 admin-state disable"]}
+restore: {device: r4, commands: ["set / interface ethernet-1/1 admin-state enable"]}

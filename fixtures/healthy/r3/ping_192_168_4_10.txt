@@ -1,0 +1,10 @@
+PING 192.168.4.10 (192.168.4.10) 72(100) bytes of data.
+80 bytes from 192.168.4.10: icmp_seq=1 ttl=62 time=0.568 ms
+80 bytes from 192.168.4.10: icmp_seq=2 ttl=62 time=0.276 ms
+80 bytes from 192.168.4.10: icmp_seq=3 ttl=62 time=0.250 ms
+80 bytes from 192.168.4.10: icmp_seq=4 ttl=62 time=0.197 ms
+80 bytes from 192.168.4.10: icmp_seq=5 ttl=62 time=0.277 ms
+
+--- 192.168.4.10 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 2ms
+rtt min/avg/max/mdev = 0.197/0.314/0.568/0.130 ms, ipg/ewma 0.596/0.332 ms

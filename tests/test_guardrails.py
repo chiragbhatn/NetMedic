@@ -62,8 +62,63 @@ def test_accepts_ip_commands_on_linux_only(command):
     ],
 )
 def test_rejects_unsafe_commands(command):
+    for platform in (None, "frr", "arista_eos", "nokia_srlinux", "linux"):
+        if platform == "linux" and command == "ip addr":
+            continue
+        with pytest.raises(CommandRejected):
+            validate_read_command(command, platform)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "info flat",
+        "info",
+        "info flat interface ethernet-1/1",
+        "info from state network-instance default protocols bgp",
+        "show network-instance default route-table ipv4-unicast summary",
+        "show network-instance default protocols bgp neighbor",
+        "show interface ethernet-1/1",
+    ],
+)
+def test_accepts_srl_read_commands(command):
+    validate_read_command(command, "nokia_srlinux")
+
+
+@pytest.mark.parametrize("command", ["info flat", "info"])
+def test_info_only_on_srl(command):
+    for platform in (None, "frr", "arista_eos", "linux"):
+        with pytest.raises(CommandRejected):
+            validate_read_command(command, platform)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "enter candidate",
+        "enter candidate private",
+        "info from candidate",
+        "commit now",
+        "info flat commit now",
+        "discard now",
+        "set / interface ethernet-1/1 admin-state disable",
+        "show set",
+        "load startup",
+        "save startup",
+        "tools system reboot",
+        "file cat /etc/passwd",
+        "info flat checkpoint",
+        "rollback",
+        "info delete",
+        "info flat | grep x",
+        "bash",
+        "ip addr",
+        "ping 10.0.0.1 network-instance default",
+    ],
+)
+def test_rejects_srl_state_changes(command):
     with pytest.raises(CommandRejected):
-        validate_read_command(command)
+        validate_read_command(command, "nokia_srlinux")
 
 
 @pytest.mark.parametrize(
@@ -84,6 +139,44 @@ def test_rejects_destructive_changes(commands):
 
 def test_accepts_normal_change():
     validate_change_commands(["interface eth2", "no shutdown"])
+
+
+@pytest.mark.parametrize("command", ["show ip addr", "show ip route", "show interface", "show"])
+def test_linux_hosts_have_no_show(command):
+    with pytest.raises(CommandRejected, match="linux hosts have no 'show' commands; use "
+                       "'ip addr' or 'ip route'"):
+        validate_read_command(command, "linux")
+    validate_read_command("show ip route", "frr")  # routers still accept show
+
+
+@pytest.mark.parametrize("command", ["commit now", "commit stay", "enter candidate",
+                                     "enter candidate private", "discard now", "quit",
+                                     "exit all", "save startup", "Commit now"])
+def test_srl_change_rejects_session_control(command):
+    commands = ["set / interface ethernet-1/1 admin-state enable", command]
+    with pytest.raises(CommandRejected, match="NetMedic enters candidate mode and commits"):
+        validate_change_commands(commands, "nokia_srlinux")
+
+
+def test_srl_change_accepts_set_lines():
+    validate_change_commands(["set / interface ethernet-1/1 admin-state enable"],
+                             "nokia_srlinux")
+
+
+@pytest.mark.parametrize("platform", ["frr", "arista_eos"])
+@pytest.mark.parametrize("command", ["configure terminal", "conf t", "configure session x",
+                                     "end", "write memory", "wr", "copy running-config "
+                                     "startup-config", "do write"])
+def test_cli_change_rejects_session_control(platform, command):
+    with pytest.raises(CommandRejected, match="enters and leaves configuration mode itself"):
+        validate_change_commands([command, "interface eth2", "no shutdown"], platform)
+
+
+@pytest.mark.parametrize("platform", ["frr", "arista_eos"])
+def test_cli_change_keeps_exit_and_normal_lines(platform):
+    validate_change_commands(["interface eth2", "no shutdown", "exit", "router ospf",
+                              "network 10.0.12.0/30 area 0", "description endpoint"],
+                             platform)
 
 
 @pytest.mark.parametrize("target", ["10.0.0.1", "192.168.3.10"])

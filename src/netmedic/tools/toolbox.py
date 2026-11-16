@@ -21,8 +21,8 @@ from netmedic.guardrails import (
     validate_read_command,
 )
 from netmedic.inventory import Device, Inventory
+from netmedic.platforms import ROUTER_PLATFORMS, PlatformCommands, commands_for, probe_command
 
-ROUTER_PLATFORMS = ("frr", "arista_eos")
 CHANGE_ID_RE = re.compile(r"^[a-f0-9]{1,32}$")
 INTERFACE_RE = re.compile(r"^[A-Za-z0-9/._:-]+$")
 
@@ -88,8 +88,10 @@ SPECS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "run_show",
-        "Run a read-only command on a device. Only 'show ...' commands are allowed "
-        "('ip addr' / 'ip route' on linux hosts). Returns raw CLI text.",
+        "Run a read-only command on a device. Routers accept 'show ...' commands "
+        "(nokia_srlinux also 'info ...'); linux hosts have no 'show' and accept only "
+        "'ip addr' / 'ip route'. "
+        "Returns raw CLI text.",
         _schema(
             {"device": _DEVICE, "command": {"type": "string", "description": "e.g. show ip route"}},
             ("device", "command"),
@@ -148,7 +150,8 @@ SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "propose_change",
         "Record a proposed configuration change for human review. Does not touch the device. "
-        "Returns JSON with the change_id.",
+        "Commands are configuration lines only; entering config mode and committing are "
+        "handled by NetMedic. Returns JSON with the change_id.",
         _schema(
             {
                 "device": _DEVICE,
@@ -263,11 +266,19 @@ class Toolbox:
         return self.driver.run(device, command)
 
     @staticmethod
-    def _require_router(device: Device, tool: str) -> None:
+    def _require_router(device: Device, tool: str) -> PlatformCommands:
         if device.platform not in ROUTER_PLATFORMS:
             raise ToolError(
                 f"{tool} is not supported on {device.name} (platform {device.platform})"
             )
+        return commands_for(device.platform)
+
+    @staticmethod
+    def _running_config_command(device: Device) -> str:
+        command = commands_for(device.platform).running_config
+        if command is None:
+            raise ToolError(f"{device.name} (platform {device.platform}) has no running config")
+        return command
 
     # --- read-only tools ------------------------------------------------------
 
@@ -284,43 +295,40 @@ class Toolbox:
 
     def _tool_get_interfaces(self, device: str, interface: str | None = None) -> str:
         dev = self.inventory.get(device)
-        if dev.platform == "linux":
-            if interface:
-                raise ToolError("interface filter is not supported on linux hosts; omit it")
-            return self._run(dev, "ip addr")
+        cmds = commands_for(dev.platform)
         if interface is None:
-            command = "show interface brief" if dev.platform == "frr" else "show ip interface brief"
-        else:
-            if not INTERFACE_RE.match(interface):
-                raise ToolError(f"invalid interface name '{interface}'")
-            keyword = "interface" if dev.platform == "frr" else "interfaces"
-            command = f"show {keyword} {interface}"
-        return self._run(dev, command)
+            return self._run(dev, cmds.interfaces)
+        if cmds.interface is None:
+            raise ToolError(
+                f"interface filter is not supported on {dev.platform} hosts; omit it"
+            )
+        if not INTERFACE_RE.match(interface):
+            raise ToolError(f"invalid interface name '{interface}'")
+        return self._run(dev, cmds.interface.format(name=interface))
 
     def _tool_get_routes(self, device: str, prefix: str | None = None) -> str:
         dev = self.inventory.get(device)
-        if dev.platform == "linux":
-            if prefix:
-                raise ToolError("prefix filter is not supported on linux hosts; omit it")
-            return self._run(dev, "ip route")
+        cmds = commands_for(dev.platform)
         if prefix is None:
-            return self._run(dev, "show ip route")
+            return self._run(dev, cmds.routes)
+        if cmds.route is None:
+            raise ToolError(f"prefix filter is not supported on {dev.platform} hosts; omit it")
         try:
             ipaddress.IPv4Network(prefix, strict=False)
         except ValueError:
             raise ToolError(f"invalid IPv4 prefix '{prefix}'") from None
-        return self._run(dev, f"show ip route {prefix}")
+        return self._run(dev, cmds.route.format(prefix=prefix))
 
     def _tool_get_neighbors(self, device: str, protocol: str) -> str:
         dev = self.inventory.get(device)
-        self._require_router(dev, "get_neighbors")
-        command = "show ip ospf neighbor" if protocol == "ospf" else "show ip bgp summary"
+        cmds = self._require_router(dev, "get_neighbors")
+        command = cmds.ospf_neighbors if protocol == "ospf" else cmds.bgp_neighbors
         return self._run(dev, command)
 
     def _tool_get_config(self, device: str) -> str:
         dev = self.inventory.get(device)
         self._require_router(dev, "get_config")
-        return self._run(dev, "show running-config")
+        return self._run(dev, self._running_config_command(dev))
 
     def _tool_diff_against_golden(self, device: str) -> str:
         dev = self.inventory.get(device)
@@ -329,7 +337,7 @@ class Toolbox:
         if not golden_path.is_file():
             raise ToolError(f"no golden config for {dev.name} ({golden_path.name})")
         golden_text = clean_running_config(golden_path.read_text(encoding="utf-8"))
-        running_text = clean_running_config(self._run(dev, "show running-config"))
+        running_text = clean_running_config(self._run(dev, self._running_config_command(dev)))
         golden = [line.rstrip() for line in golden_text.splitlines()]
         running = [line.rstrip() for line in running_text.splitlines()]
         diff = list(
@@ -343,7 +351,7 @@ class Toolbox:
     def _probe(self, tool: str, device: str, target: str) -> str:
         dev = self.inventory.get(device)
         validate_ipv4(target)
-        return self.driver.run(dev, f"{tool} {target}")
+        return self.driver.run(dev, probe_command(dev.platform, tool, target))
 
     def _tool_ping(self, device: str, target: str) -> str:
         return self._probe("ping", device, target)
@@ -385,7 +393,7 @@ class Toolbox:
     def _tool_propose_change(self, device: str, commands: list[str], reason: str) -> str:
         dev = self.inventory.get(device)
         commands = [c.strip() for c in commands if c.strip()]
-        validate_change_commands(commands)
+        validate_change_commands(commands, dev.platform)
         proposal = ChangeProposal(
             id=uuid.uuid4().hex[:12], device=dev.name, commands=commands, reason=reason,
             status="proposed", rollback_config=None,
@@ -402,7 +410,7 @@ class Toolbox:
             raise ToolError(f"change {change_id} is '{proposal.status}', expected 'proposed'")
         dev = self.inventory.get(proposal.device)
         proposal.rollback_config = clean_running_config(
-            self.driver.run(dev, "show running-config")
+            self.driver.run(dev, self._running_config_command(dev))
         )
         try:
             self._approve(proposal)

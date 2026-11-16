@@ -1,0 +1,4 @@
+Using network instance default
+traceroute to 10.255.0.3 (10.255.0.3), 30 hops max, 60 byte packets
+ 1  10.0.24.1 (10.0.24.1)  0.101 ms  0.089 ms  0.103 ms
+ 2  10.255.0.3 (10.255.0.3)  0.650 ms  0.446 ms  0.483 ms

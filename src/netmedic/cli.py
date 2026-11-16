@@ -26,29 +26,25 @@ from netmedic.evals import (
     ssh_driver_from_env,
     write_results,
 )
-from netmedic.inventory import Inventory
+from netmedic.inventory import Inventory, load_inventory
 from netmedic.llm import LLMClient, create_llm, describe_llm
+from netmedic.platforms import PROBE_TARGETS  # noqa: F401  (re-exported for callers)
+from netmedic.platforms import record_commands as _platform_record_commands
 from netmedic.tools.toolbox import Approver, Toolbox
 
 app = typer.Typer(help="NetMedic: AI network troubleshooting agent.", no_args_is_help=True)
-console = Console()
-err = Console(stderr=True)
 
-# Logical command sets for `record` (SPEC sections 6 and 7).
-RECORD_COMMANDS = {
-    "frr": ["show interface brief", "show ip route", "show ip ospf neighbor",
-            "show ip ospf interface", "show ip bgp summary", "show running-config"],
-    "arista_eos": ["show ip interface brief", "show ip route", "show ip ospf neighbor",
-                   "show ip ospf interface", "show ip bgp summary", "show running-config",
-                   "show ip access-lists"],
-    "linux": ["ip addr", "ip route"],
-}
-RECORD_INTERFACES = {
-    "r1": ["eth1", "eth2"], "r2": ["eth1", "eth2"], "r3": ["Ethernet1", "Ethernet2"],
-}
-RECORD_PREFIXES = ["192.168.1.0/24", "192.168.3.0/24",
-                   "10.255.0.1/32", "10.255.0.2/32", "10.255.0.3/32"]
-PROBE_TARGETS = ["192.168.1.10", "192.168.3.10", "10.255.0.1", "10.255.0.2", "10.255.0.3"]
+
+def make_console(stderr: bool = False, width: int | None = None) -> Console:
+    """Line output is soft-wrapped: one logical line stays one line whatever the terminal
+    width (or when piped), so output does not depend on where it runs. Tables opt out."""
+    return Console(stderr=stderr, soft_wrap=True, width=width)
+
+
+console = make_console()
+err = make_console(stderr=True)
+
+# Logical command sets for `record` live in netmedic.platforms (SPEC sections 6 and 7).
 
 
 def make_llm() -> LLMClient:
@@ -64,12 +60,33 @@ def build_toolbox(
     root: Path,
 ) -> Toolbox:
     """The one place commands build a Toolbox. `scenario` is ignored in live mode."""
+    inventory = _load_inventory(root)
+    if not live:
+        _warn_missing_fixtures(inventory, root)
     driver: Driver = ssh_driver_from_env() if live else ReplayDriver(root / "fixtures", scenario)
     return Toolbox(
-        Inventory.load(root / "inventory.yaml"), driver, AuditLog(root / "audit.jsonl"),
+        inventory, driver, AuditLog(root / "audit.jsonl"),
         golden_dir=root / "lab" / "golden", changes_dir=root / "changes",
         approver=approver, allow_changes=allow_changes,
     )
+
+
+def _load_inventory(root: Path) -> Inventory:
+    """load_inventory() plus its warnings on stderr (never stdout: mcp owns stdout)."""
+    inventory = load_inventory(root)
+    for warning in inventory.warnings:
+        err.print(f"[yellow]inventory: {escape(warning)}[/]")
+    return inventory
+
+
+def _warn_missing_fixtures(inventory: Inventory, root: Path) -> None:
+    """Replay mode keys fixtures by device name; NetBox names may not match them."""
+    if not inventory.source.startswith("NetBox"):
+        return
+    missing = [n for n in inventory.devices if not (root / "fixtures" / "healthy" / n).is_dir()]
+    if missing:
+        err.print(f"[yellow]warning: no fixtures/healthy/ directory for NetBox device(s) "
+                  f"{escape(', '.join(missing))}; replay mode cannot answer for them[/]")
 
 
 def _fail(exc: Exception) -> typer.Exit:
@@ -164,6 +181,30 @@ def diagnose(
     console.print(f"To roll back: netmedic rollback {change_id}", markup=False)
 
 
+# --- inventory ----------------------------------------------------------------------------
+
+@app.command("inventory")
+def inventory_command() -> None:
+    """Show the devices NetMedic will use (YAML or NetBox); no LLM call."""
+    try:
+        inventory = _load_inventory(Path.cwd())
+    except NetMedicError as exc:
+        raise _fail(exc) from None
+    # Plain columns sized to the data, not the terminal: nothing is ever cropped, and the
+    # output is the same on any terminal or when piped (one device per line).
+    rows = [("NAME", "PLATFORM", "ROLE", "HOST", "PORT")] + [
+        (d.name, d.platform, d.role, d.host, str(d.port)) for d in inventory.devices.values()
+    ]
+    widths = [max(len(row[i]) for row in rows) for i in range(5)]
+    console.print(f"Source: {inventory.source}", markup=False)
+    for row in rows:
+        line = "  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True))
+        console.print(line.rstrip(), markup=False)
+    if inventory.links:
+        console.print("Links: " + ", ".join(f"{a}-{b}" for a, b in inventory.links),
+                      markup=False)
+
+
 # --- approve / rollback / mcp ------------------------------------------------------------
 
 @app.command()
@@ -212,6 +253,50 @@ def mcp(
     except NetMedicError as exc:
         raise _fail(exc) from None
     serve(toolbox)
+
+
+@app.command()
+def web(
+    scenario: str = typer.Option("healthy", help="Default fixture scenario (replay mode)."),
+    live: bool = typer.Option(False, "--live", help="Use the live lab over SSH."),
+    host: str = typer.Option("127.0.0.1", help="Address to listen on."),
+    port: int = typer.Option(8080, help="Port to listen on."),
+    max_steps: int = typer.Option(25, help="Step budget (LLM calls) per diagnosis."),
+    allow_remote: bool = typer.Option(
+        False, "--allow-remote", help="Allow a --host other than a loopback address."
+    ),
+) -> None:
+    """Serve the local web UI: run read-only diagnoses and watch them step by step."""
+    import ipaddress
+
+    try:
+        import uvicorn
+
+        from netmedic.web.app import LOOPBACK_HOSTS, create_app
+    except ImportError:
+        raise _fail(NetMedicError(
+            'the web UI needs FastAPI and uvicorn: pip install -e ".[web]"')) from None
+    try:
+        loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    if not loopback:
+        err.print(f"[yellow]warning: --host {escape(host)} is not a loopback address. The web "
+                  "UI has no authentication: anyone who can reach it can start diagnoses, and "
+                  "each diagnosis spends Anthropic API tokens.[/]")
+        if not allow_remote:
+            err.print("[red]error:[/] pass --allow-remote to listen on it anyway")
+            raise typer.Exit(2)
+    root = Path.cwd()
+    try:
+        _load_inventory(root)  # fail fast on a broken inventory
+    except NetMedicError as exc:
+        raise _fail(exc) from None
+    web_app = create_app(root, live=live, default_scenario=scenario, max_steps=max_steps,
+                         trusted_hosts=[*LOOPBACK_HOSTS, host] if loopback else ["*"])
+    shown = f"[{host}]" if ":" in host else host
+    console.print(f"NetMedic web UI: http://{shown}:{port}/  (Ctrl+C to stop)", markup=False)
+    uvicorn.run(web_app, host=host, port=port, log_level="warning")
 
 
 # --- eval ---------------------------------------------------------------------------------
@@ -275,7 +360,7 @@ def eval_command(
     model = describe_llm(llms[0]) if llms else "unknown"
     console.print(f"LLM: {model}", markup=False)
     write_results(results, out, model, "live" if live else "replay")
-    console.print(_results_table(results))
+    console.print(_results_table(results), soft_wrap=False)  # tables size to the terminal
     passed = sum(r.passed for r in results)
     unsafe = sum(not r.safety_ok for r in results)
     console.print(f"{passed} of {len(results)} passed; {unsafe} safety failure(s). "
@@ -288,13 +373,7 @@ def eval_command(
 
 def record_commands(name: str, platform: str) -> list[str]:
     """Every logical command recorded for one device (SPEC sections 6 and 7)."""
-    commands = list(RECORD_COMMANDS[platform])
-    if platform != "linux":
-        keyword = "interface" if platform == "frr" else "interfaces"
-        commands += [f"show {keyword} {i}" for i in RECORD_INTERFACES.get(name, [])]
-        commands += [f"show ip route {p}" for p in RECORD_PREFIXES]
-    commands += [f"{tool} {t}" for tool in ("ping", "traceroute") for t in PROBE_TARGETS]
-    return commands
+    return _platform_record_commands(name, platform)
 
 
 @app.command()
@@ -302,7 +381,7 @@ def record(scenario: str = typer.Option(..., help="Scenario id to record into fi
     """Record live lab output into fixtures/<scenario>/ (needs the lab)."""
     root = Path.cwd()
     try:
-        inventory = Inventory.load(root / "inventory.yaml")
+        inventory = _load_inventory(root)
         driver = ssh_driver_from_env()
     except NetMedicError as exc:
         raise _fail(exc) from None

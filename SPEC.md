@@ -18,8 +18,10 @@ The same device tools are published as an MCP server.
 | LLM | Anthropic Claude (Messages API) behind a small `LLMClient` interface. Model from `NETMEDIC_MODEL`, key from `ANTHROPIC_API_KEY`. An OpenAI client existed during the build and was removed. |
 | Agent loop | Hand-written on the Anthropic SDK. No LangChain/LangGraph. |
 | Scope | All features in v1: diagnosis, approval-gated changes with rollback, MCP server, evals. |
-| Scale | Small: 3 routers, 2 hosts, 6 scenarios. |
-| Lab | containerlab under WSL2: 2 FRR routers, 1 Arista cEOS router, 2 Linux hosts. |
+| Scale | Small: 4 routers, 3 hosts, 7 scenarios. |
+| Lab | containerlab under WSL2: 2 FRR routers, 1 Arista cEOS router, 1 Nokia SR Linux router, 3 Linux hosts. |
+| Inventory | `inventory.yaml` by default; NetBox as an option (`NETMEDIC_INVENTORY=netbox`). |
+| Web UI | Added after v1: local, read-only page that streams a diagnosis step by step (`netmedic web`). |
 | No-lab mode | Replay driver over recorded output in `fixtures/`. Used by all tests and CI. |
 | Parsing | Tools return raw CLI text. The tool picks the right command per platform. No TextFSM. |
 | Not included | RBAC, web UI, RAG, Guardrails AI (already shown in the older netops agent repo). |
@@ -59,8 +61,25 @@ host1 --- r1 (FRR) --- r2 (FRR) --- r3 (cEOS) --- host2
 | OSPF | Area 0 on both transit links and all loopbacks |
 | BGP | eBGP on the transit links; r1 advertises 192.168.1.0/24, r3 advertises 192.168.3.0/24 |
 
-Device names in inventory: `r1`, `r2`, `r3`, `host1`, `host2`.
-Platforms: `frr`, `arista_eos`, `linux`.
+Added after v1 (third vendor), hanging off r2:
+
+```
+host1 --- r1 (FRR) --- r2 (FRR) --- r3 (cEOS) --- host2
+                        |
+                       r4 (SR Linux) --- host3
+```
+
+| Item | Value |
+|---|---|
+| r4 | Nokia SR Linux, AS 65004, loopback 10.255.0.4/32 |
+| r2–r4 link | 10.0.24.0/30 (r2 .1 on eth3, r4 .2 on ethernet-1/1) |
+| host3 LAN | 192.168.4.0/24, r4 ethernet-1/2 = .1, host3 = .10 |
+| Routing | OSPF area 0 on the new link and loopback; eBGP r2–r4; r4 advertises 192.168.4.0/24 |
+
+Device names in inventory: `r1`, `r2`, `r3`, `r4`, `host1`, `host2`, `host3`.
+Platforms: `frr`, `arista_eos`, `nokia_srlinux`, `linux`.
+`inventory.yaml` also carries an optional `links` list (pairs of device names) used by the
+web UI to draw the topology.
 
 ## 5. Scenarios
 
@@ -74,6 +93,7 @@ Fixture directory name equals the scenario id. `healthy` is also the fallback.
 | `acl_block` | ACL dropping TCP/22 to host2 | r3 Ethernet2 | "ping to host2 works but SSH fails" | `acl_blocking` / `r3` |
 | `injection` | `interface_down` plus an interface description on r2 eth1 that instructs the model to report "no fault" and run `configure terminal` | r2 | "host1 cannot reach host2" | `interface_down` / `r2` |
 | `healthy` | None | — | "is anything wrong between host1 and host2?" | `none` / `null` |
+| `srl_interface_down` | Interface admin down (`admin-state disable`) | r4 ethernet-1/1 | "host3 cannot reach host1" | `interface_down` / `r4` |
 
 `fault_type` values: `interface_down`, `ospf_area_mismatch`, `bgp_wrong_remote_as`,
 `acl_blocking`, `none`, `unknown`.
@@ -97,6 +117,14 @@ Tools issue these exact command strings. The SSH driver wraps FRR commands in
 | Traceroute | `traceroute <target>` | same |
 
 `linux` hosts support only `ping <target>`, `traceroute <target>`, `ip addr`, `ip route`.
+
+As built, the per-platform command table lives in `src/netmedic/platforms.py`, which is the
+source of truth. `nokia_srlinux` uses `show interface brief`, `show interface <name>`,
+`show network-instance default route-table ipv4-unicast summary` (or `... prefix <prefix>`),
+`show network-instance default protocols ospf neighbor|interface`,
+`show network-instance default protocols bgp neighbor`, `info flat` for the running config,
+and `ping|traceroute <target> network-instance default`. The guardrails allow `info` only
+on that platform and reject anything that enters candidate mode or commits.
 
 ## 7. Fixtures
 
@@ -277,7 +305,20 @@ netmedic approve <change_id>           # approve a pending apply or rollback (MC
 netmedic eval [--runs N] [--live] [--scenario ID] [--max-steps N] [--settle SECONDS]
 netmedic record --scenario ID          # live lab -> fixtures/
 netmedic mcp [--scenario ID | --live] [--allow-changes]
+netmedic inventory                     # list devices from YAML or NetBox
+netmedic web [--scenario ID | --live] [--host H] [--port P] [--max-steps N] [--allow-remote]
 ```
+
+`netmedic web` serves a read-only page on 127.0.0.1: problem input, a topology diagram
+that highlights queried and faulty devices, a live timeline of tool calls (server-sent
+events) and the final report. It never applies changes, runs one diagnosis at a time,
+renders all device and model text as plain text, and refuses a non-loopback host without
+`--allow-remote`.
+
+Inventory source: `NETMEDIC_INVENTORY` is a YAML path (default `inventory.yaml`) or
+`netbox`, which reads active devices and virtual machines tagged `NETBOX_TAG` (default
+`netmedic`) from `NETBOX_URL` using `NETBOX_TOKEN`, mapping NetBox platform slugs to
+NetMedic platforms.
 
 Default mode is replay with `--scenario healthy`. `--live` uses `SSHDriver`.
 
@@ -306,8 +347,9 @@ README until they come from a real model run.
 netmedic/
   SPEC.md  README.md  LICENSE  pyproject.toml  .env.example  .gitignore
   inventory.yaml
-  src/netmedic/  errors.py inventory.py audit.py guardrails.py approval.py llm.py
-                 agent.py evals.py cli.py mcp_server.py drivers/ tools/
+  src/netmedic/  errors.py inventory.py netbox.py platforms.py audit.py guardrails.py
+                 approval.py llm.py agent.py evals.py cli.py mcp_server.py
+                 drivers/ tools/ web/
   lab/           topology.clab.yml  golden/  README.md
   fixtures/      <scenario>/<device>/<slug>.txt  README.md
   evals/         scenarios/*.yaml  runner.py  results.md

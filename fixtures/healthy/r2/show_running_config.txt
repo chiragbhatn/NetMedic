@@ -23,6 +23,13 @@ interface eth2
  ip ospf area 0
 exit
 !
+interface eth3
+ description to-r4
+ ip address 10.0.24.1/30
+ ip ospf network point-to-point
+ ip ospf area 0
+exit
+!
 interface lo
  ip address 10.255.0.2/32
  ip ospf area 0
@@ -33,6 +40,7 @@ router bgp 65002
  no bgp ebgp-requires-policy
  neighbor 10.0.12.1 remote-as 65001
  neighbor 10.0.23.2 remote-as 65003
+ neighbor 10.0.24.2 remote-as 65004
 exit
 !
 router ospf
