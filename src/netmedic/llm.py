@@ -1,4 +1,4 @@
-"""LLM clients behind a small provider-neutral interface.
+"""LLM client (Anthropic Claude) behind a small provider-neutral interface.
 
 Neutral message format used by the agent loop:
   {"role": "system" | "user", "content": str}
@@ -12,7 +12,6 @@ History is append-only: clients convert it, never edit it.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -20,7 +19,6 @@ from typing import Any, Protocol
 
 from netmedic.errors import NetMedicError
 
-PROVIDERS = ("openai", "anthropic")
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
 
@@ -45,15 +43,6 @@ class LLMClient(Protocol):
     def complete(self, messages: list[dict], tools: list[dict]) -> LLMResponse: ...
 
 
-def _parse_arguments(raw: str | None) -> dict:
-    """Malformed or non-object JSON becomes {} so the Toolbox can report the error."""
-    try:
-        value = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
 def _require_model(model: str | None) -> str:
     model = model or os.environ.get("NETMEDIC_MODEL")
     if not model:
@@ -64,10 +53,10 @@ def _require_model(model: str | None) -> str:
 _SECRET_RE = re.compile(r"sk-[A-Za-z0-9_\-*]{4,}")
 
 
-def provider_error_message(exc: Exception, provider: str = "OpenAI") -> str:
+def provider_error_message(exc: Exception, provider: str = "Anthropic") -> str:
     """Short, key-free message: provider, HTTP status if any, and the provider's own text."""
     status = getattr(exc, "status_code", None)
-    message = getattr(exc, "api_message", None)  # anthropic: error.message from the body
+    message = getattr(exc, "api_message", None)  # error.message from the body
     body = getattr(exc, "body", None)
     if not message and isinstance(body, dict):
         inner = body.get("error") if isinstance(body.get("error"), dict) else body
@@ -77,89 +66,6 @@ def provider_error_message(exc: Exception, provider: str = "OpenAI") -> str:
     message = _SECRET_RE.sub("sk-***", " ".join(message.split()))
     where = f"{provider} API error (HTTP {status})" if status else f"{provider} API error"
     return f"{where}: {message}"
-
-
-# --- OpenAI -------------------------------------------------------------------------------
-
-class OpenAIClient:
-    """OpenAI Responses API client (`client.responses.create`), stateless (store=False)."""
-
-    provider = "openai"
-
-    def __init__(self, model: str | None = None, api_key: str | None = None, client: Any = None):
-        self.model = _require_model(model)
-        if client is None:
-            api_key = api_key or os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                raise NetMedicError("no API key configured: set OPENAI_API_KEY or pass api_key=")
-            import openai  # lazy: tests and replay mode never need it
-
-            client = openai.OpenAI(api_key=api_key)
-        self.client = client
-
-    @staticmethod
-    def to_input(messages: list[dict]) -> list[dict]:
-        """Convert neutral messages to Responses API input items."""
-        items: list[dict] = []
-        for m in messages:
-            role = m["role"]
-            if role in ("system", "user"):
-                items.append({"role": role, "content": m["content"]})
-            elif role == "assistant":
-                if m.get("content"):
-                    items.append({"role": "assistant", "content": m["content"]})
-                for tc in m.get("tool_calls") or []:
-                    items.append({
-                        "type": "function_call", "call_id": tc.id, "name": tc.name,
-                        "arguments": json.dumps(tc.arguments),
-                    })
-            elif role == "tool":
-                items.append({
-                    "type": "function_call_output", "call_id": m["tool_call_id"],
-                    "output": m["content"],
-                })
-            else:
-                raise NetMedicError(f"unknown message role '{role}'")
-        return items
-
-    @staticmethod
-    def to_tools(tools: list[dict]) -> list[dict]:
-        # Strict only where the tool asks for it: strict mode requires every property in
-        # `required`, which the Toolbox tools (optional arguments) do not satisfy.
-        return [
-            {"type": "function", "name": t["name"], "description": t["description"],
-             "parameters": t["parameters"], "strict": bool(t.get("strict", False))}
-            for t in tools
-        ]
-
-    @staticmethod
-    def parse(response: Any) -> LLMResponse:
-        calls = [
-            ToolCall(id=item.call_id, name=item.name, arguments=_parse_arguments(item.arguments))
-            for item in response.output
-            if getattr(item, "type", None) == "function_call"
-        ]
-        usage = response.usage
-        return LLMResponse(
-            text=response.output_text or None,
-            tool_calls=calls,
-            input_tokens=usage.input_tokens if usage else 0,
-            output_tokens=usage.output_tokens if usage else 0,
-        )
-
-    def complete(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
-        import openai
-
-        try:
-            response = self.client.responses.create(
-                model=self.model,
-                input=self.to_input(messages),
-                tools=self.to_tools(tools),
-                store=False,
-            )
-        except openai.OpenAIError as exc:  # status, connection and timeout errors; no retry
-            raise NetMedicError(provider_error_message(exc, "OpenAI")) from None
-        return self.parse(response)
 
 
 # --- Anthropic ----------------------------------------------------------------------------
@@ -319,27 +225,11 @@ class AnthropicClient:
         return self.parse(response)
 
 
-# --- selection ----------------------------------------------------------------------------
+# --- construction -------------------------------------------------------------------------
 
-def select_provider(model: str | None = None, provider: str | None = None) -> str:
-    """NETMEDIC_PROVIDER if set; else anthropic for claude* models, otherwise openai."""
-    provider = (provider or os.environ.get("NETMEDIC_PROVIDER") or "").strip().lower()
-    if provider:
-        if provider not in PROVIDERS:
-            raise NetMedicError(
-                f"unknown NETMEDIC_PROVIDER '{provider}' (use {' or '.join(PROVIDERS)})"
-            )
-        return provider
-    model = _require_model(model)
-    return "anthropic" if model.lower().startswith("claude") else "openai"
-
-
-def create_llm(model: str | None = None, provider: str | None = None) -> LLMClient:
-    """Build the configured client from the environment (NETMEDIC_MODEL required)."""
-    model = _require_model(model)
-    if select_provider(model, provider) == "anthropic":
-        return AnthropicClient(model)
-    return OpenAIClient(model)
+def create_llm(model: str | None = None) -> LLMClient:
+    """Build the Anthropic client from the environment (NETMEDIC_MODEL required)."""
+    return AnthropicClient(_require_model(model))
 
 
 def describe_llm(llm: object) -> str:

@@ -52,7 +52,7 @@ PROBE_TARGETS = ["192.168.1.10", "192.168.3.10", "10.255.0.1", "10.255.0.2", "10
 
 
 def make_llm() -> LLMClient:
-    """LLM factory (provider from NETMEDIC_PROVIDER / NETMEDIC_MODEL); tests replace it."""
+    """LLM factory (Anthropic, model from NETMEDIC_MODEL); tests replace it."""
     return create_llm()
 
 

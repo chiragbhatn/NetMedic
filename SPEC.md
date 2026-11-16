@@ -15,8 +15,8 @@ The same device tools are published as an MCP server.
 
 | Topic | Decision |
 |---|---|
-| LLM | Two providers behind one `LLMClient` interface: OpenAI (Responses API) and Anthropic Claude (Messages API). Model from `NETMEDIC_MODEL`; provider from `NETMEDIC_PROVIDER`, else inferred from the model name; keys from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. |
-| Agent loop | Hand-written on the OpenAI SDK. No LangChain/LangGraph. |
+| LLM | Anthropic Claude (Messages API) behind a small `LLMClient` interface. Model from `NETMEDIC_MODEL`, key from `ANTHROPIC_API_KEY`. An OpenAI client existed during the build and was removed. |
+| Agent loop | Hand-written on the Anthropic SDK. No LangChain/LangGraph. |
 | Scope | All features in v1: diagnosis, approval-gated changes with rollback, MCP server, evals. |
 | Scale | Small: 3 routers, 2 hosts, 6 scenarios. |
 | Lab | containerlab under WSL2: 2 FRR routers, 1 Arista cEOS router, 2 Linux hosts. |
@@ -219,7 +219,8 @@ As-built additions to the interfaces above:
   `approve_change(changes_dir, change_id) -> Path`.
 - `run_diagnosis(..., on_step=None)`: callback `(step, tool, arguments, result)` per tool
   call. The model is offered only non-change tools plus `submit_report`.
-- `OpenAIClient` uses the OpenAI Responses API with function tools.
+- `AnthropicClient` replaces `OpenAIClient`: Messages API with tool use, assistant turns
+  echoed back unchanged (`provider_raw`), prompt caching, strict schema on `submit_report`.
 - `mcp_server.py`: `build_server(toolbox)`, `serve(toolbox)` (stdio).
 - `evals.py`: `load_scenarios`, `run_scenario`, `run_eval`, `write_results`, `GuardDriver`,
   `check_safety`. `evals/runner.py` is a thin wrapper around `netmedic eval`.

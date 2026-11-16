@@ -15,8 +15,7 @@ other MCP clients can use them under the same guardrails.
 | Unit and integration tests | Pass in replay mode (`pytest`), on Python 3.10; CI runs 3.10 and 3.12 |
 | Fixtures (recorded device output) | **Synthetic**: hand-written to imitate FRR, Arista EOS and Linux; see `fixtures/README.md` |
 | Live containerlab lab | Topology and guide written (`lab/`), **not yet deployed or tested** |
-| Anthropic path | **Verified with real runs** on 2026-11-16: `claude-haiku-5-5` and `claude-sonnet-5-5`, replay mode, 3 runs per scenario (see Results) |
-| OpenAI path | Implemented and unit-tested. **Not verified end to end**: the only real call so far failed with HTTP 429 (no account credits) |
+| LLM (Anthropic Claude) | **Verified with real runs** on 2026-11-16: `claude-haiku-5-5` and `claude-sonnet-5-5`, replay mode, 3 runs per scenario (see Results) |
 | Eval results | 18 of 18 runs passed on each Claude model, 0 safety failures, on synthetic fixtures (see Results and its caveats) |
 
 ## Results (2026-11-16)
@@ -76,17 +75,17 @@ cache writes is ignored, so the figures slightly underestimate the real cost.
                     SSHDriver (live lab)        ReplayDriver (fixtures)
 ```
 
-The agent loop is about 200 lines and talks to the model through a small
-provider-neutral interface. Two providers are implemented: OpenAI (Responses API) and
-Anthropic Claude (Messages API). Each step is one LLM call; the model calls tools, sees
-their output, and finishes by calling `submit_report`. The agent and the MCP server
-both go through the same `Toolbox`, so the guardrails and audit log apply to both.
+The agent loop is about 200 lines and talks to Anthropic Claude (Messages API)
+through a small provider-neutral interface. Each step is one LLM call; the model calls
+tools, sees their output, and finishes by calling `submit_report`. The agent and the
+MCP server both go through the same `Toolbox`, so the guardrails and audit log apply
+to both.
 
 The conversation history is append-only, and each assistant turn is sent back exactly
-as the provider returned it. For Claude this includes thinking blocks, which the API
-requires unchanged. Claude requests use automatic prompt caching, so the shared prefix
-of the growing conversation is read from cache on later steps. Token counts include
-cached input; `diagnose` and `eval` also show how much of it was cached.
+as the API returned it, including thinking blocks, which the API requires unchanged.
+Requests use automatic prompt caching, so the shared prefix of the growing conversation
+is read from cache on later steps. Token counts include cached input; `diagnose` and
+`eval` also show how much of it was cached.
 
 Tools return raw CLI text. Each tool picks the right command for the device platform
 (`frr`, `arista_eos`, `linux`).
@@ -133,8 +132,8 @@ Tools return raw CLI text. Each tool picks the right command for the device plat
 ## Quick start (replay mode)
 
 Replay mode answers every command from the recorded output in `fixtures/`, so it
-needs no lab. The tests need no API key; `diagnose` and `eval` call the configured LLM
-provider and do.
+needs no lab. The tests need no API key; `diagnose` and `eval` call the Anthropic API
+and do.
 
 Windows PowerShell:
 
@@ -144,7 +143,7 @@ cd NetMedic
 python -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
 .venv\Scripts\python -m pytest -q
-Copy-Item .env.example .env   # then set NETMEDIC_MODEL and the provider's API key in .env
+Copy-Item .env.example .env   # then set NETMEDIC_MODEL and ANTHROPIC_API_KEY in .env
 .venv\Scripts\netmedic diagnose "host1 cannot reach host2" --scenario interface_down
 .venv\Scripts\netmedic eval
 ```
@@ -157,29 +156,31 @@ cd NetMedic
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
-cp .env.example .env          # then set NETMEDIC_MODEL and the provider's API key in .env
+cp .env.example .env          # then set NETMEDIC_MODEL and ANTHROPIC_API_KEY in .env
 .venv/bin/netmedic diagnose "host1 cannot reach host2" --scenario interface_down
 .venv/bin/netmedic eval
 ```
 
 Run commands from the project root: `netmedic` reads `inventory.yaml`, `fixtures/`,
 `lab/golden/`, `changes/`, `audit.jsonl` and `.env` relative to the current directory.
-Configuration problems and provider API errors (for example HTTP 429 when the account
+Configuration problems and Anthropic API errors (for example HTTP 429 when the account
 has no credits) are printed as a one-line `error: ...` message with exit code 2.
 
-### Choosing the LLM provider
+### LLM
+
+NetMedic uses Anthropic Claude through the Messages API. The client sits behind a
+small `LLMClient` interface, so another provider could be added as a new client class.
 
 | Variable | Meaning |
 |---|---|
-| `NETMEDIC_MODEL` | Required, no default. An OpenAI model id, or a Claude model id such as `claude-haiku-5-5` |
-| `NETMEDIC_PROVIDER` | Optional: `openai` or `anthropic`. If unset, model ids starting with `claude` use Anthropic and everything else uses OpenAI |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | The key for the selected provider |
-| `NETMEDIC_EFFORT` | Optional, Anthropic only: `low`, `medium`, `high`, `xhigh` or `max`. Unset uses the model's default |
+| `NETMEDIC_MODEL` | Required, no default. A Claude model id such as `claude-haiku-5-5` or `claude-sonnet-5-5` |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `NETMEDIC_EFFORT` | Optional: `low`, `medium`, `high`, `xhigh` or `max`. Unset uses the model's default |
 | `NETMEDIC_ANTHROPIC_FALLBACKS` | Set to `off` to disable server-side refusal fallbacks (see below) |
 
-`diagnose` prints the provider and model it uses, and `evals/results.md` records them.
+`diagnose` prints the model it uses, and `evals/results.md` records it.
 
-Claude-specific behaviour: requests use `max_tokens=16000` and leave thinking,
+Request details: requests use `max_tokens=16000` and leave thinking,
 sampling parameters and `tool_choice` at the model defaults. A response the model
 refuses, or one cut off at the token limit, is reported as an error; tool calls from
 a cut-off response are never executed. For `claude-fable-5-2`, `claude-fable-5-1`,
@@ -340,7 +341,7 @@ from the lab into `fixtures/<id>/`, replacing the synthetic fixtures.
 NetMedic/
   src/netmedic/
     agent.py         agent loop, system prompt, submit_report schema
-    llm.py           OpenAI and Anthropic clients, provider selection, FakeLLM for tests
+    llm.py           LLMClient interface, Anthropic client, FakeLLM for tests
     tools/toolbox.py the 12 tools, argument checks, change proposals
     guardrails.py    command allowlist, output truncation
     approval.py      terminal and file-based approvers, `approve_change`
@@ -363,9 +364,9 @@ NetMedic/
   report validation fit in one small file that is easy to read and test.
 - **One tool layer for the agent and MCP.** Guardrails, approval and audit live in the
   Toolbox, so they cannot be bypassed by choosing a different front end.
-- **A thin provider interface.** The agent loop sees only text, tool calls and token
-  counts; each client converts the history to its provider's format and carries the
-  provider's own form of each assistant turn, so the loop does not change per provider.
+- **A thin LLM interface.** The agent loop sees only text, tool calls and token counts;
+  the client converts the history to the API's format and carries the API's own form of
+  each assistant turn, so another provider would not change the loop.
 - **Replay driver.** Tests and CI need neither a lab nor an API key; the same code
   paths run against recorded output.
 - **Deterministic scoring.** Pass/fail is an exact match on fault type and device,
@@ -379,7 +380,7 @@ finish: its `submit_report` calls arrived with two parameters merged into one st
 the report was rejected as missing a field, four times in a row. The fix was to mark
 `submit_report` as a strict tool (`strict: true`, every field required,
 `additionalProperties: false`, the nullable `device` written as `anyOf` string/null),
-so the provider guarantees the arguments match the schema. The agent also rejects any
+so the API guarantees the arguments match the schema. The agent also rejects any
 report value that contains tool-call markup, with a message that tells the model what
 to correct, and never repairs a malformed report itself, so the score reflects what the
 model sent. The evaluation runs above were made after this fix.
@@ -389,13 +390,11 @@ model sent. The evaluation runs above were made after this fix.
 - Fixtures are synthetic until re-recorded from the live lab with `netmedic record`.
 - `SSHDriver`, including `restore_config` (rollback), has not been run against real
   devices.
-- The Anthropic path has been verified only in replay mode on synthetic fixtures (see
-  the Results caveats); accuracy on real devices is unknown.
-- The OpenAI path has not been verified end to end: the only real call so far failed
-  with HTTP 429 (no account credits). It is tested against stubbed SDK clients only.
+- The agent has been verified only in replay mode on synthetic fixtures (see the
+  Results caveats); accuracy on real devices is unknown.
 - The topology is small: three routers, two hosts, six scenarios, three runs each in
   the published results.
-- Two LLM providers (OpenAI and Anthropic); others would need a new client class.
+- One LLM provider (Anthropic); another would need a new client class.
 
 ## Licence
 

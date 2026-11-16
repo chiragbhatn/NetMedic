@@ -2,22 +2,10 @@ from types import SimpleNamespace
 
 import anthropic
 import httpx2
-import openai
 import pytest
 from anthropic.types import Message, TextBlock, ThinkingBlock, ToolUseBlock, Usage
 from anthropic.types.beta.beta_fallback_block import BetaFallbackBlock
 from anthropic.types.refusal_stop_details import RefusalStopDetails
-from openai.types.responses import (
-    Response,
-    ResponseFunctionToolCall,
-    ResponseOutputMessage,
-    ResponseOutputText,
-)
-from openai.types.responses.response_usage import (
-    InputTokensDetails,
-    OutputTokensDetails,
-    ResponseUsage,
-)
 
 from netmedic.errors import NetMedicError
 from netmedic.llm import (
@@ -25,162 +13,15 @@ from netmedic.llm import (
     AnthropicClient,
     FakeLLM,
     LLMResponse,
-    OpenAIClient,
     ToolCall,
     create_llm,
     describe_llm,
-    select_provider,
+    provider_error_message,
 )
-
-
-def sdk_response(text: str | None, calls: list[tuple[str, str, str]]) -> Response:
-    """Build a real SDK Response object (unvalidated) so attribute names are checked."""
-    output = [
-        ResponseFunctionToolCall(type="function_call", call_id=cid, name=name, arguments=args)
-        for cid, name, args in calls
-    ]
-    if text is not None:
-        output.insert(0, ResponseOutputMessage.model_construct(
-            type="message", role="assistant", id="m1", status="completed",
-            content=[ResponseOutputText.model_construct(
-                type="output_text", text=text, annotations=[])],
-        ))
-    usage = ResponseUsage.model_construct(
-        input_tokens=120, output_tokens=30, total_tokens=150,
-        input_tokens_details=InputTokensDetails.model_construct(cached_tokens=0),
-        output_tokens_details=OutputTokensDetails.model_construct(reasoning_tokens=0),
-    )
-    return Response.model_construct(output=output, usage=usage)
-
-
-class StubResponses:
-    def __init__(self, response):
-        self.response = response
-        self.kwargs: dict = {}
-
-    def create(self, **kwargs):
-        self.kwargs = kwargs
-        return self.response
-
-
-def stub_client(response) -> SimpleNamespace:
-    return SimpleNamespace(responses=StubResponses(response))
-
 
 TOOLS = [{"name": "ping", "description": "Ping.", "parameters": {
     "type": "object", "properties": {"target": {"type": "string"}},
     "required": ["target"], "additionalProperties": False}}]
-
-
-def test_requires_model_and_key(monkeypatch):
-    monkeypatch.delenv("NETMEDIC_MODEL", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(NetMedicError, match="NETMEDIC_MODEL"):
-        OpenAIClient()
-    with pytest.raises(NetMedicError, match="OPENAI_API_KEY"):
-        OpenAIClient(model="some-model")
-
-
-def test_model_from_env(monkeypatch):
-    monkeypatch.setenv("NETMEDIC_MODEL", "env-model")
-    assert OpenAIClient(client=stub_client(None)).model == "env-model"
-
-
-def test_request_conversion():
-    client = stub_client(sdk_response("hi", []))
-    llm = OpenAIClient(model="m", client=client)
-    messages = [
-        {"role": "system", "content": "sys"},
-        {"role": "user", "content": "problem"},
-        {"role": "assistant", "content": "thinking",
-         "tool_calls": [ToolCall("c1", "ping", {"target": "10.0.0.1"})]},
-        {"role": "tool", "tool_call_id": "c1", "content": "pong"},
-        {"role": "assistant", "content": None, "tool_calls": []},
-    ]
-    llm.complete(messages, TOOLS)
-    kwargs = client.responses.kwargs
-    assert kwargs["model"] == "m"
-    assert kwargs["store"] is False
-    assert kwargs["input"] == [
-        {"role": "system", "content": "sys"},
-        {"role": "user", "content": "problem"},
-        {"role": "assistant", "content": "thinking"},
-        {"type": "function_call", "call_id": "c1", "name": "ping",
-         "arguments": '{"target": "10.0.0.1"}'},
-        {"type": "function_call_output", "call_id": "c1", "output": "pong"},
-    ]
-    assert kwargs["tools"] == [{"type": "function", "name": "ping", "description": "Ping.",
-                                "parameters": TOOLS[0]["parameters"], "strict": False}]
-
-
-def test_response_parsing():
-    response = sdk_response("looking", [
-        ("c1", "ping", '{"device": "r1", "target": "10.0.0.1"}'),
-        ("c2", "get_routes", "{not json"),
-        ("c3", "list_devices", "[1, 2]"),
-    ])
-    result = OpenAIClient(model="m", client=stub_client(response)).complete([], TOOLS)
-    assert result.text == "looking"
-    assert result.tool_calls == [
-        ToolCall("c1", "ping", {"device": "r1", "target": "10.0.0.1"}),
-        ToolCall("c2", "get_routes", {}),
-        ToolCall("c3", "list_devices", {}),
-    ]
-    assert (result.input_tokens, result.output_tokens) == (120, 30)
-
-
-def test_response_without_text():
-    result = OpenAIClient(model="m", client=stub_client(sdk_response(None, []))).complete([], [])
-    assert result.text is None and result.tool_calls == []
-
-
-REQUEST = httpx2.Request("POST", "https://api.openai.com/v1/responses")
-NO_CREDITS = "You have no credits remaining. Add credits to continue."
-
-
-class RaisingResponses:
-    def __init__(self, exc):
-        self.exc = exc
-
-    def create(self, **kwargs):
-        raise self.exc
-
-
-def raising_client(exc) -> SimpleNamespace:
-    return SimpleNamespace(responses=RaisingResponses(exc))
-
-
-def status_error(cls, status, message):
-    return cls(f"Error code: {status} - ...", response=httpx2.Response(status, request=REQUEST),
-               body={"message": message, "type": "x", "code": None})
-
-
-@pytest.mark.parametrize(
-    ("exc", "expected"),
-    [
-        (status_error(openai.RateLimitError, 429, NO_CREDITS),
-         f"OpenAI API error (HTTP 429): {NO_CREDITS}"),
-        (status_error(openai.InternalServerError, 500, "The server had an error."),
-         "OpenAI API error (HTTP 500): The server had an error."),
-        (openai.APIConnectionError(request=REQUEST), "OpenAI API error: Connection error."),
-        (openai.APITimeoutError(request=REQUEST), "OpenAI API error: Request timed out."),
-    ],
-)
-def test_provider_errors_become_netmedic_errors(exc, expected):
-    llm = OpenAIClient(model="m", client=raising_client(exc))
-    with pytest.raises(NetMedicError) as info:
-        llm.complete([], [])
-    assert str(info.value) == expected
-    assert info.value.__cause__ is None and info.value.__suppress_context__
-
-
-def test_provider_error_never_shows_api_key():
-    exc = status_error(openai.AuthenticationError, 401,
-                       "Incorrect API key provided: sk-proj-abcdEFGH1234****wxyz.")
-    with pytest.raises(NetMedicError) as info:
-        OpenAIClient(model="m", client=raising_client(exc)).complete([], [])
-    assert "abcdEFGH" not in str(info.value) and "sk-***" in str(info.value)
-    assert str(info.value).startswith("OpenAI API error (HTTP 401): Incorrect API key")
 
 
 def test_fake_llm_records_and_runs_out():
@@ -226,8 +67,7 @@ def anthropic_stub(response=None, exc=None) -> SimpleNamespace:
 
 @pytest.fixture
 def no_anthropic_env(monkeypatch):
-    for var in ("NETMEDIC_EFFORT", "NETMEDIC_ANTHROPIC_FALLBACKS", "NETMEDIC_PROVIDER",
-                "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+    for var in ("NETMEDIC_EFFORT", "NETMEDIC_ANTHROPIC_FALLBACKS", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -313,13 +153,11 @@ STRICT_TOOL = {"name": "submit_report", "description": "Report.", "strict": True
                               "required": ["a"], "additionalProperties": False}}
 
 
-def test_strict_flag_carried_to_both_providers(no_anthropic_env):
+def test_strict_flag_carried_to_tool_definition(no_anthropic_env):
     anthropic_tools = AnthropicClient.to_tools([TOOLS[0], STRICT_TOOL])
     assert "strict" not in anthropic_tools[0]
     assert anthropic_tools[1] == {"name": "submit_report", "description": "Report.",
                                   "input_schema": STRICT_TOOL["parameters"], "strict": True}
-    openai_tools = OpenAIClient.to_tools([TOOLS[0], STRICT_TOOL])
-    assert [t["strict"] for t in openai_tools] == [False, True]
 
 
 def test_anthropic_effort(no_anthropic_env, monkeypatch):
@@ -435,40 +273,24 @@ def test_anthropic_timeout_and_key_masking(no_anthropic_env):
     assert "SECRET" not in str(info.value) and "sk-***" in str(info.value)
 
 
-# --- provider selection ---------------------------------------------------------------------
+# --- construction ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize(
-    ("model", "provider", "expected"),
-    [
-        ("claude-haiku-5-5", None, "anthropic"),
-        ("Claude-Opus-5-5", None, "anthropic"),
-        ("gpt-x", None, "openai"),
-        ("gpt-x", "anthropic", "anthropic"),
-        ("claude-haiku-5-5", "openai", "openai"),
-        ("claude-haiku-5-5", " Anthropic ", "anthropic"),
-    ],
-)
-def test_select_provider(no_anthropic_env, model, provider, expected):
-    assert select_provider(model, provider) == expected
-
-
-def test_select_provider_errors(no_anthropic_env, monkeypatch):
-    with pytest.raises(NetMedicError, match="unknown NETMEDIC_PROVIDER"):
-        select_provider("claude-haiku-5-5", "gemini")
-    monkeypatch.setenv("NETMEDIC_PROVIDER", "mistral")
-    with pytest.raises(NetMedicError, match="unknown NETMEDIC_PROVIDER"):
-        select_provider("gpt-x")
-    monkeypatch.delenv("NETMEDIC_PROVIDER")
+def test_create_llm_requires_model(no_anthropic_env, monkeypatch):
     monkeypatch.delenv("NETMEDIC_MODEL", raising=False)
     with pytest.raises(NetMedicError, match="NETMEDIC_MODEL"):
         create_llm()
 
 
-def test_create_llm_picks_client(no_anthropic_env, monkeypatch):
+def test_create_llm_is_anthropic(no_anthropic_env, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    claude_llm = create_llm("claude-haiku-5-5")
-    assert isinstance(claude_llm, AnthropicClient)
-    assert describe_llm(claude_llm) == "anthropic / claude-haiku-5-5"
-    assert isinstance(create_llm("gpt-x"), OpenAIClient)
+    monkeypatch.setenv("NETMEDIC_MODEL", "claude-haiku-5-5")
+    llm = create_llm()
+    assert isinstance(llm, AnthropicClient)
+    assert describe_llm(llm) == "anthropic / claude-haiku-5-5"
+    # a non-Claude id is passed through as-is; the API decides whether it exists
+    assert create_llm("some-other-model").model == "some-other-model"
     assert describe_llm(FakeLLM([])) == "FakeLLM"
+
+
+def test_provider_error_message_defaults_to_anthropic():
+    assert provider_error_message(RuntimeError("boom")) == "Anthropic API error: boom"

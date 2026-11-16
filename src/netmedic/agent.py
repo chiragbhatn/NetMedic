@@ -45,8 +45,8 @@ NUDGE = (
 
 # Strict tool use: the provider guarantees the arguments match this schema. Strict mode
 # needs every property in `required` and `additionalProperties: false`; the nullable
-# device is written as anyOf (documented for Anthropic strict mode, and the form the
-# OpenAI SDK itself emits for optional fields) rather than a list-valued "type".
+# device is written as anyOf (documented as supported in Anthropic strict mode) rather
+# than a list-valued "type".
 SUBMIT_REPORT_TOOL = {
     "name": SUBMIT_REPORT,
     "description": "Submit the final diagnosis. Call exactly once, when done.",

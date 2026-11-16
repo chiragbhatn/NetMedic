@@ -1,30 +1,32 @@
 import json
 from types import SimpleNamespace
 
+import anthropic
 import httpx2
-import openai
 import pytest
 from typer.testing import CliRunner
 
 from netmedic import cli
 from netmedic.evals import RunResult
-from netmedic.llm import FakeLLM, LLMResponse, OpenAIClient, ToolCall
+from netmedic.llm import AnthropicClient, FakeLLM, LLMResponse, ToolCall
 
 runner = CliRunner()
-NO_CREDITS = "You have no credits remaining. Add credits to continue."
+NO_CREDITS = "Your credit balance is too low to access the Anthropic API."
 
 
-def no_credits_llm() -> OpenAIClient:
-    """A real OpenAIClient whose stubbed SDK client fails like an account with no credits."""
-    request = httpx2.Request("POST", "https://api.openai.com/v1/responses")
-    exc = openai.RateLimitError("Error code: 429 - ...",
-                                response=httpx2.Response(429, request=request),
-                                body={"message": NO_CREDITS, "type": "insufficient_quota"})
+def no_credits_llm() -> AnthropicClient:
+    """A real AnthropicClient whose stubbed SDK client fails like an account with no credits."""
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    exc = anthropic.RateLimitError(
+        "Error code: 429 - ...", response=httpx2.Response(429, request=request),
+        body={"type": "error", "error": {"type": "rate_limit_error", "message": NO_CREDITS}},
+    )
 
     def create(**kwargs):
         raise exc
 
-    return OpenAIClient(model="m", client=SimpleNamespace(responses=SimpleNamespace(create=create)))
+    return AnthropicClient(model="claude-haiku-5-5",
+                           client=SimpleNamespace(messages=SimpleNamespace(create=create)))
 
 INVENTORY = """\
 devices:
@@ -105,30 +107,19 @@ def test_diagnose_fix_declined_at_approver(project):
 def test_diagnose_without_api_config_fails_cleanly(project, monkeypatch):
     monkeypatch.setattr(cli, "make_llm", cli.create_llm)
     monkeypatch.delenv("NETMEDIC_MODEL", raising=False)
-    monkeypatch.delenv("NETMEDIC_PROVIDER", raising=False)
     result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"])
     assert result.exit_code == 2
     assert "NETMEDIC_MODEL" in result.stderr
 
 
-@pytest.mark.parametrize(
-    ("env", "missing"),
-    [
-        ({"NETMEDIC_MODEL": "claude-haiku-5-5"}, "ANTHROPIC_API_KEY"),
-        ({"NETMEDIC_MODEL": "gpt-x"}, "OPENAI_API_KEY"),
-        ({"NETMEDIC_MODEL": "gpt-x", "NETMEDIC_PROVIDER": "anthropic"}, "ANTHROPIC_API_KEY"),
-        ({"NETMEDIC_MODEL": "m", "NETMEDIC_PROVIDER": "gemini"}, "NETMEDIC_PROVIDER"),
-    ],
-)
-def test_diagnose_missing_provider_config(project, monkeypatch, env, missing):
+@pytest.mark.parametrize("model", ["claude-haiku-5-5", "not-a-claude-model"])
+def test_diagnose_missing_api_key(project, monkeypatch, model):
     monkeypatch.setattr(cli, "make_llm", cli.create_llm)
-    for var in ("NETMEDIC_PROVIDER", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
-    for key, value in env.items():
-        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("NETMEDIC_MODEL", model)
     result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"])
     assert result.exit_code == 2
-    assert missing in result.stderr and "Traceback" not in result.output
+    assert "ANTHROPIC_API_KEY" in result.stderr and "Traceback" not in result.output
 
 
 def test_diagnose_shows_provider_and_cached_tokens(project, monkeypatch):
@@ -235,7 +226,7 @@ def test_diagnose_provider_error_is_clean(project, monkeypatch):
     monkeypatch.setattr(cli, "make_llm", no_credits_llm)
     result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"])
     assert result.exit_code == 2
-    assert f"OpenAI API error (HTTP 429): {NO_CREDITS}" in " ".join(result.stderr.split())
+    assert f"Anthropic API error (HTTP 429): {NO_CREDITS}" in " ".join(result.stderr.split())
     assert "Traceback" not in result.output and result.exception.__class__ is SystemExit
 
 
