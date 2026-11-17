@@ -9,6 +9,7 @@ from netmedic.errors import CommandRejected
 from netmedic.platforms import PLATFORMS
 
 MAX_OUTPUT_CHARS = 8000
+MAX_COMMAND_CHARS = 200  # no legitimate read-only command comes close to this
 TRUNCATION_MARKER = "\n[truncated: output exceeded {limit} characters]"
 
 FORBIDDEN_CHARS = ("|", ";", "&", ">", "<", "`", "$(", "\n", "\r")
@@ -41,6 +42,10 @@ def validate_read_command(command: str, platform: str | None = None) -> None:
     platform may allow more read-only prefixes (netmedic.platforms): `ip addr` /
     `ip route` on linux, `info ...` on nokia_srlinux.
     """
+    if len(command) > MAX_COMMAND_CHARS:
+        raise CommandRejected(
+            f"command is too long ({len(command)} characters; the limit is {MAX_COMMAND_CHARS})"
+        )
     for token in FORBIDDEN_CHARS:
         if token in command:
             raise CommandRejected(f"command contains forbidden characters {token!r}")

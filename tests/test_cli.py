@@ -236,7 +236,8 @@ def test_submit_report_step_line_is_short(project, monkeypatch):
     result = runner.invoke(cli.app, ["diagnose", "p", "--no-fix"])
     assert result.exit_code == 0, result.output
     lines = result.output.splitlines()
-    [submit_line] = [line for line in lines if "submit_report" in line]
+    # match the tool column, not any text: a temp path can contain this test's own name
+    [submit_line] = [line for line in lines if " submit_report " in line]
     assert "fault_type=interface_down device=r2 -> Report accepted." in submit_line
     assert "evidence line" not in submit_line
     [show_line] = [line for line in lines if " run_show " in line]

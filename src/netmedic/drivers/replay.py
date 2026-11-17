@@ -27,7 +27,11 @@ class ReplayDriver:
         filename = slugify(command) + ".txt"
         for scenario in dict.fromkeys([self.scenario, FALLBACK_SCENARIO]):
             path = self.fixtures_dir / scenario / device.name / filename
-            if path.is_file():
+            try:
+                found = path.is_file()
+            except OSError:  # e.g. file name too long on Linux: there is no such fixture
+                found = False
+            if found:
                 return path.read_text(encoding="utf-8")
         raise FixtureNotFoundError(
             f"no fixture for '{command}' on {device.name} "
